@@ -1,0 +1,3608 @@
+﻿// 2.10.4 添加新工具菜单：创建 FPS帧率显示（可以自动创建帧率显示脚本相关对象）
+
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEditor;
+using UnityEditor.IMGUI.Controls;
+using UnityEditor.SceneManagement;
+using System.Collections.Generic;
+using System.Linq;
+using System;
+using System.Runtime.InteropServices;
+using Vic.Runtime;
+using Vic.Editor; // VicToolsIconLoader 等 Editor-only 公共工具
+
+namespace VicTools
+{
+    /// VicTools 全局配置和常量
+    public static class VicToolsConfig
+    {
+        /// VicTools 全局版本号 - 从 package.json 动态读取
+        public static string Ver
+        {
+            get
+            {
+                var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(VicToolsConfig).Assembly);
+                return packageInfo != null ? packageInfo.version : "unknown";
+            }
+        }
+
+        /// 性能分析器窗口标签名（包含版本号）
+        /// 已移至 ScenePerformanceAnalyzer.WindowName，与 ScenesTools/ProjectTools 等脚本保持一致
+    }
+    
+    /// 子窗口抽象基类 - 参考ES3Window的SubWindow设计
+    
+    public abstract class SubWindow
+    {
+        public readonly string Name;
+        protected readonly EditorWindow Parent;
+
+        protected SubWindow(string name, EditorWindow parent)
+        {
+            Name = name;
+            Parent = parent;
+        }
+        
+        public virtual void OnEnable() { }
+        public virtual void OnDisable() { }
+        public virtual void OnGUI() { }
+        public virtual void OnFocus() { }
+        public virtual void OnLostFocus() { }
+        public virtual void OnDestroy() { }
+        public virtual void OnHierarchyChange() { }
+        
+        // ReSharper disable Unity.PerformanceAnalysis
+        /// 创建带事件处理的Slider控件 - 公共方法，可在任何子窗口中使用
+        /// <param name="label">Slider标签</param>
+        /// <param name="value">当前值</param>
+        /// <param name="leftValue">最小值</param>
+        /// <param name="rightValue">最大值</param>
+        /// <param name="onValueChanged">值变化时的回调函数（每次变化都触发）</param>
+        /// <returns>更新后的Slider值</returns>
+        protected float CreateSliderWithEvent(string label, float value, float leftValue, float rightValue, 
+                                         Action<float> onValueChanged = null)
+        {
+            EditorGUI.BeginChangeCheck();
+            var newValue = EditorGUILayout.Slider(label, value, leftValue, rightValue);
+            var valueChanged = EditorGUI.EndChangeCheck();
+
+            if (!valueChanged) return newValue;
+            // 调用值变化回调函数（每次变化都触发）
+            onValueChanged?.Invoke(newValue);
+                
+            // 强制重绘窗口以更新显示
+            Parent?.Repaint();
+            return newValue;
+        }
+
+        /// 创建带事件处理的整数Slider控件 - 公共方法，可在任何子窗口中使用
+        /// 使用自定义实现避免滑动图标显示问题
+        /// <param name="label">Slider标签</param>
+        /// <param name="value">当前整数值</param>
+        /// <param name="leftValue">最小整数值</param>
+        /// <param name="rightValue">最大整数值</param>
+        /// <param name="onValueChanged">值变化时的回调函数（每次变化都触发）</param>
+        /// <param name="minWidth">Slider的最小宽度（可选，默认0表示自动宽度）</param>
+        /// <param name="maxWidth">Slider的最大宽度（可选，默认0表示无限制）</param>
+        /// <param name="labelWidth">标签宽度（可选，默认0表示自动宽度）</param>
+        /// <returns>更新后的整数Slider值</returns>
+        protected int CreateIntSliderWithEvent(string label, int value, int leftValue, int rightValue,
+                                          Action<int> onValueChanged = null, float minWidth = 0, float maxWidth = 0, float labelWidth = 0)
+        {
+            var newValue = value;
+            
+            // 使用水平布局手动创建滑块和输入框
+            EditorGUILayout.BeginHorizontal();
+            
+            // 显示标签 - 支持自定义标签宽度
+            if (labelWidth > 0)
+            {
+                EditorGUILayout.LabelField(label, GUILayout.Width(labelWidth));
+            }
+            else
+            {
+                EditorGUILayout.LabelField(label);
+            }
+            
+            // 创建滑块部分 - 使用自定义样式避免滑动图标
+            float sliderValue = value;
+            float minValue = leftValue;
+            float maxValue = rightValue;
+            
+            // 使用自定义的滑块实现
+            EditorGUI.BeginChangeCheck();
+            switch (minWidth)
+            {
+                case > 0 when maxWidth > 0:
+                    sliderValue = GUILayout.HorizontalSlider(sliderValue, minValue, maxValue, GUILayout.MinWidth(minWidth), GUILayout.MaxWidth(maxWidth));
+                    break;
+                case > 0:
+                    sliderValue = GUILayout.HorizontalSlider(sliderValue, minValue, maxValue, GUILayout.MinWidth(minWidth));
+                    break;
+                default:
+                {
+                    sliderValue = maxWidth > 0 ? GUILayout.HorizontalSlider(sliderValue, minValue, maxValue, GUILayout.MaxWidth(maxWidth)) : GUILayout.HorizontalSlider(sliderValue, minValue, maxValue);
+
+                    break;
+                }
+            }
+            
+            // 将滑块值转换为整数
+            var sliderIntValue = Mathf.RoundToInt(sliderValue);
+            var sliderChanged = EditorGUI.EndChangeCheck();
+            
+            // 如果滑块变化了，更新newValue并移除输入框焦点
+            if (sliderChanged)
+            {
+                newValue = sliderIntValue;
+                // 移除输入框焦点，确保滑块能够正常工作
+                GUI.FocusControl(null);
+            }
+            
+            // 显示数值输入框 - 使用当前值（可能是滑块更新后的值）
+            EditorGUI.BeginChangeCheck();
+            newValue = EditorGUILayout.IntField(newValue, GUILayout.Width(60));
+            var inputChanged = EditorGUI.EndChangeCheck();
+            
+            // 确保数值在有效范围内
+            newValue = Mathf.Clamp(newValue, leftValue, rightValue);
+            
+            EditorGUILayout.EndHorizontal();
+            
+            var valueChanged = sliderChanged || inputChanged;
+
+            if (!valueChanged) return newValue;
+            // 调用值变化回调函数（每次变化都触发）
+            onValueChanged?.Invoke(newValue);
+
+            // 强制重绘窗口以更新显示
+            Parent?.Repaint();
+            return newValue;
+        }
+        
+        // ReSharper disable Unity.PerformanceAnalysis
+        /// 创建带自定义样式的Toggle控件 - 内置选中时颜色变化功能，支持点击标签切换状态
+        /// <param name="label">Toggle标签</param>
+        /// <param name="value">当前Toggle状态</param>
+        /// <param name="onValueChanged">值变化时的回调函数</param>
+        /// <param name="toggleStyle">Toggle自定义GUI样式（可选）</param>
+        /// <param name="labelStyle">标签自定义GUI样式（可选）</param>
+        /// <param name="activeLabelStyle">Toggle选中时的标签样式（可选）</param>
+        /// <param name="labelWidth">标签宽度（可选，默认80）</param>
+        /// <param name="toggleWidth">Toggle宽度（可选，默认20）</param>
+        /// <returns>更新后的Toggle状态</returns>
+        /// 使用方法：
+            // includeSubfolders = base.CreateToggleWithStyle("包含子文件夹", includeSubfolders, 
+            // (newValue) => {
+            //     Debug.Log($"Toggle状态变化: {includeSubfolders} → {newValue}");
+            // });
+            protected bool CreateToggleWithStyle(string label, bool value, Action<bool> onValueChanged = null, 
+                                        GUIStyle toggleStyle = null, GUIStyle labelStyle = null, GUIStyle activeLabelStyle = null,
+                                        float labelWidth = 80, float toggleWidth = 20)
+        {
+            // 将string转换为GUIContent，调用支持GUIContent的重载方法
+            return CreateToggleWithStyle(new GUIContent(label), value, onValueChanged, toggleStyle, labelStyle, activeLabelStyle, labelWidth, toggleWidth);
+        }
+
+        // ReSharper disable Unity.PerformanceAnalysis
+        /// 创建带自定义样式的Toggle控件 - 内置选中时颜色变化功能，支持点击标签切换状态，支持带ToolTip的GUIContent
+        /// <param name="labelContent">Toggle标签内容（支持ToolTip）</param>
+        /// <param name="value">当前Toggle状态</param>
+        /// <param name="onValueChanged">值变化时的回调函数</param>
+        /// <param name="toggleStyle">Toggle自定义GUI样式（可选）</param>
+        /// <param name="labelStyle">标签自定义GUI样式（可选）</param>
+        /// <param name="activeLabelStyle">Toggle选中时的标签样式（可选）</param>
+        /// <param name="labelWidth">标签宽度（可选，默认80）</param>
+        /// <param name="toggleWidth">Toggle宽度（可选，默认20）</param>
+        /// <returns>更新后的Toggle状态</returns>
+        /// 使用方法：
+            // includeSubfolders = base.CreateToggleWithStyle(new GUIContent("包含子文件夹", "包含子文件夹的ToolTip提示"), includeSubfolders, 
+            // (newValue) => {
+            //     Debug.Log($"Toggle状态变化: {includeSubfolders} → {newValue}");
+            // });
+            protected bool CreateToggleWithStyle(GUIContent labelContent, bool value, Action<bool> onValueChanged = null, 
+                                        GUIStyle toggleStyle = null, GUIStyle labelStyle = null, GUIStyle activeLabelStyle = null,
+                                        float labelWidth = 80, float toggleWidth = 20)
+        {
+            EditorGUI.BeginChangeCheck();
+            
+            var newValue = value;
+            
+            // 如果未提供activeLabelStyle，创建默认的选中时样式
+            if (activeLabelStyle == null)
+            {
+                activeLabelStyle = new GUIStyle(EditorStyles.label != null ? EditorStyles.label : new GUIStyle());
+                // activeLabelStyle.fontStyle = FontStyle.Bold;
+                activeLabelStyle.normal.textColor = new Color(0.95f, 0.45f, 0.3f); // 默认选中时颜色
+                activeLabelStyle.fontSize = 14;
+                // activeLabelStyle.GUILayout.Width(80);
+                // GUIStyle不是UnityEngine.Object，没有hideFlags属性
+                // 不需要设置HideFlags.HideAndDontSave
+            }
+            
+            // 如果未提供labelStyle，创建默认的未选中时样式
+            labelStyle ??= new GUIStyle(EditorStyles.label != null ? EditorStyles.label : new GUIStyle())
+            {
+                normal =
+                {
+                    textColor = new Color(0.2f, 0.8f, 0.4f) // 默认未选中时颜色
+                },
+                fontSize = 14
+            };
+            // GUIStyle不是UnityEngine.Object，没有hideFlags属性
+            // 不需要设置HideFlags.HideAndDontSave
+            
+            // 使用水平布局手动控制标签和Toggle的位置
+            EditorGUILayout.BeginHorizontal();
+            
+            // 创建标签区域 - 支持点击切换状态
+            var labelRect = EditorGUILayout.GetControlRect(GUILayout.Width(labelWidth));
+            // Toggle未选中时使用labelStyle
+            // Toggle选中时使用activeLabelStyle
+            EditorGUI.LabelField(labelRect, labelContent, value ? activeLabelStyle : labelStyle);
+
+            // 检测标签点击事件
+            var currentEvent = Event.current;
+            if (currentEvent.type == EventType.MouseDown && labelRect.Contains(currentEvent.mousePosition))
+            {
+                newValue = !value;
+                currentEvent.Use(); // 消耗事件，防止重复处理
+            }
+            
+            // 显示Toggle - 支持自定义样式和宽度
+            newValue = toggleStyle != null ? EditorGUILayout.Toggle(newValue, toggleStyle, GUILayout.Width(toggleWidth)) : EditorGUILayout.Toggle(newValue, GUILayout.Width(toggleWidth));
+            
+            EditorGUILayout.EndHorizontal();
+            
+            var valueChanged = EditorGUI.EndChangeCheck() || (newValue != value);
+
+            if (!valueChanged) return newValue;
+            // 调用值变化回调函数
+            onValueChanged?.Invoke(newValue);
+                
+            // 强制重绘窗口以更新显示
+            Parent?.Repaint();
+
+            return newValue;
+        }
+
+        // ReSharper disable Unity.PerformanceAnalysis
+        /// 创建带自定义样式的文本输入控件 - 使用Unity Editor自带组件，支持长文本滚动和自动光标聚焦
+        /// 完全修复了控件名称冲突和焦点管理问题，确保每个文本框都有稳定唯一的控件名称
+        /// 修复了文本控件内容相互影响的问题，确保每个文本框独立工作
+        /// <param name="label">文本标签</param>
+        /// <param name="text">当前文本内容</param>
+        /// <param name="onTextChanged">文本变化时的回调函数</param>
+        /// <param name="labelWidth">标签宽度（可选，默认80）</param>
+        /// <param name="fieldWidth">输入框宽度（可选，默认0表示自动宽度）</param>
+        /// <param name="alignment">文本对齐方式（可选，默认TextAnchor.MiddleLeft）</param>
+        /// <param name="labelStyle">标签自定义GUI样式（可选）</param>
+        /// <param name="textFieldStyle">输入框自定义GUI样式（可选）</param>
+        /// <param name="controlName">控件名称，用于焦点控制（可选）</param>
+        /// <returns>更新后的文本内容</returns>
+        /// 使用方法：
+        // searchText = base.CreateTextFieldWithStyle("搜索文本", searchText, 
+        // (newText) => {
+        //     Debug.Log($"文本输入变化: {searchText} → {newText}");
+        // }, 
+        // 80, 200, TextAnchor.MiddleLeft, null, null, "ProjectTools_pathField");
+        protected string CreateTextFieldWithStyle(string label, string text, Action<string> onTextChanged = null, 
+                                             float labelWidth = 80, float fieldWidth = 0, TextAnchor alignment = TextAnchor.MiddleLeft,
+                                             GUIStyle labelStyle = null, GUIStyle textFieldStyle = null, string controlName = null)
+        {
+            EditorGUI.BeginChangeCheck();
+            
+            string newText;
+            
+            // 使用水平布局手动控制标签和输入框的位置
+            EditorGUILayout.BeginHorizontal();
+            
+            // 显示标签 - 支持自定义标签样式
+            if (labelWidth > 0)
+            {
+                if (labelStyle != null)
+                {
+                    EditorGUILayout.LabelField(label, labelStyle, GUILayout.Width(labelWidth));
+                }
+                else
+                {
+                    EditorGUILayout.LabelField(label, GUILayout.Width(labelWidth));
+                }
+            }
+            else
+            {
+                if (labelStyle != null)
+                {
+                    EditorGUILayout.LabelField(label, labelStyle);
+                }
+                else
+                {
+                    EditorGUILayout.LabelField(label);
+                }
+            }
+            
+            // 生成稳定唯一的控件名称 - 无论是否提供controlName参数，都确保名称唯一
+            // 包含父窗口类型、标签、窗口实例ID和调用堆栈信息，确保每个文本框都有唯一名称
+            var parentTypeName = Parent?.GetType().Name ?? "Unknown";
+            var windowInstanceId = Parent != null ? VicToolsUnityCompat.GetStableIdString(Parent) : "Unknown";
+            
+            // 使用更复杂的名称生成逻辑，确保唯一性
+            controlName = string.IsNullOrEmpty(controlName) ? $"TextField_{parentTypeName}_{label}_{windowInstanceId}" :
+                // 如果提供了controlName，将其作为基础，但添加额外信息确保唯一性
+                $"TextField_{parentTypeName}_{controlName}_{windowInstanceId}";
+            
+            // 设置下一个控件名称
+            GUI.SetNextControlName(controlName);
+            
+            // 创建支持水平滚动的文本字段样式
+            var scrollableTextFieldStyle = textFieldStyle != null ? new GUIStyle(textFieldStyle) : new GUIStyle(EditorStyles.textField != null ? EditorStyles.textField : new GUIStyle());
+
+            // 确保样式支持水平滚动
+            scrollableTextFieldStyle.alignment = alignment;
+            scrollableTextFieldStyle.clipping = TextClipping.Clip; // 启用文本裁剪
+            scrollableTextFieldStyle.wordWrap = false; // 禁用自动换行，强制水平滚动
+            
+            // 使用GUILayout.TextField确保宽度参数正常工作
+            if (fieldWidth > 0)
+            {
+                // 固定宽度模式
+                newText = EditorGUILayout.TextField(text, scrollableTextFieldStyle, GUILayout.Width(fieldWidth));
+            }
+            else
+            {
+                // 自动扩展宽度模式
+                newText = EditorGUILayout.TextField(text, scrollableTextFieldStyle, GUILayout.ExpandWidth(true));
+            }
+            
+            EditorGUILayout.EndHorizontal();
+            
+            var textChanged = EditorGUI.EndChangeCheck();
+            
+            // 处理文本变化
+            if (!textChanged) return newText;
+            // 调用文本变化回调函数
+            onTextChanged?.Invoke(newText);
+                
+            // 强制重绘窗口以更新显示
+            Parent?.Repaint();
+
+            return newText;
+        }
+
+        /// 创建贴图尺寸选择器 - 专门用于选择常用贴图尺寸
+        /// <param name="label">选择器标签</param>
+        /// <param name="currentSize">当前贴图尺寸</param>
+        /// <param name="onSizeChanged">尺寸变化时的回调函数</param>
+        /// <param name="labelWidth">标签文本宽度（可选，默认0表示自动宽度）</param>
+        /// <param name="enumWidth">选择器宽度（可选，默认0表示自动宽度）</param>
+        /// <param name="style">选择器自定义GUI样式（可选）</param>
+        /// <param name="labelStyle">标签自定义GUI样式（可选）</param>
+        /// <param name="sizeOptions">自定义尺寸选项数组（可选，默认使用常用贴图尺寸）</param>
+        /// <returns>更新后的贴图尺寸</returns>
+        /// 其它文件子窗口中带onSizeChanged事件使用方法：
+        // textureSize = base.CreateEnumPopupSizeSelector($"贴图尺寸", textureSize, 
+        // (newSize) => {
+        //     Debug.Log($"自定义样式选择器 - 贴图尺寸变化: {textureSize}x{textureSize} → {newSize}x{newSize}");
+        // }, 
+        // 0, customStyle); // 使用自定义样式，宽度为0表示自动宽度
+        protected int CreateEnumPopupSizeSelector(string label, int currentSize, Action<int> onSizeChanged = null, float labelWidth = 0, 
+                                           float enumWidth = 0, GUIStyle style = null, GUIStyle labelStyle = null, int[] sizeOptions = null)
+        {
+            // 使用传入的尺寸选项，如果没有传入则使用默认的常用贴图尺寸
+            var textureSizes = sizeOptions ?? new[] { 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
+            
+            // 找到当前尺寸在选项中的索引
+            var currentIndex = Array.IndexOf(textureSizes, currentSize);
+            if (currentIndex == -1)
+            {
+                // 如果当前尺寸不在选项中，使用最接近的尺寸
+                currentIndex = 0;
+                for (var i = 0; i < textureSizes.Length; i++)
+                {
+                    if (currentSize > textureSizes[i]) continue;
+                    currentIndex = i;
+                    break;
+                }
+                if (currentIndex == 0 && currentSize > textureSizes[textureSizes.Length - 1])
+                {
+                    currentIndex = textureSizes.Length - 1;
+                }
+            }
+            
+            EditorGUI.BeginChangeCheck();
+            
+            // 创建选项数组用于显示
+            var options = new GUIContent[textureSizes.Length];
+            for (var i = 0; i < textureSizes.Length; i++)
+            {
+                options[i] = new GUIContent($"{textureSizes[i]} x {textureSizes[i]}");
+                // options[i] = new GUIContent($"{textureSizes[i]}");
+            }
+            
+            // 使用水平布局手动控制标签和选择器的位置
+            EditorGUILayout.BeginHorizontal();
+            
+            // 显示标签 - 支持自定义标签样式
+            if (labelWidth > 0)
+            {
+                if (labelStyle != null)
+                {
+                    EditorGUILayout.LabelField(label, labelStyle, GUILayout.Width(labelWidth));
+                }
+                else
+                {
+                    EditorGUILayout.LabelField(label, GUILayout.Width(labelWidth));
+                }
+            }
+            else
+            {
+                if (labelStyle != null)
+                {
+                    EditorGUILayout.LabelField(label, labelStyle);
+                }
+                else
+                {
+                    EditorGUILayout.LabelField(label);
+                }
+            }
+            
+            // 显示弹出式选择器 - 支持自定义宽度和样式
+            int newIndex;
+            switch (enumWidth)
+            {
+                case > 0 when style != null:
+                    newIndex = EditorGUILayout.Popup(currentIndex, options, style, GUILayout.Width(enumWidth));
+                    break;
+                case > 0:
+                    newIndex = EditorGUILayout.Popup(currentIndex, options, GUILayout.Width(enumWidth));
+                    break;
+                default:
+                {
+                    if (style != null)
+                    {
+                        newIndex = EditorGUILayout.Popup(currentIndex, options, style);
+                    }
+                    else
+                    {
+                        newIndex = EditorGUILayout.Popup(currentIndex, options);
+                    }
+
+                    break;
+                }
+            }
+            
+            EditorGUILayout.EndHorizontal();
+            
+            var sizeChanged = EditorGUI.EndChangeCheck();
+
+            if (!sizeChanged) return currentSize;
+            var newSize = textureSizes[newIndex];
+            // 调用尺寸变化回调函数
+            onSizeChanged?.Invoke(newSize);
+                
+            // 强制重绘窗口以更新显示
+            Parent?.Repaint();
+                
+            return newSize;
+
+        }
+
+        /// 创建字符串选项选择器 - 专门用于选择字符串选项
+        /// <param name="label">选择器标签</param>
+        /// <param name="currentIndex">当前选项索引</param>
+        /// <param name="onIndexChanged">索引变化时的回调函数</param>
+        /// <param name="labelWidth">标签文本宽度（可选，默认0表示自动宽度）</param>
+        /// <param name="enumWidth">选择器宽度（可选，默认0表示自动宽度）</param>
+        /// <param name="style">选择器自定义GUI样式（可选）</param>
+        /// <param name="labelStyle">标签自定义GUI样式（可选）</param>
+        /// <param name="stringOptions">字符串选项数组（必需）</param>
+        /// <param name="tooltip">标签的Tooltip提示文本（可选）</param>
+        /// <returns>更新后的选项索引</returns>
+        /// 使用方法：
+            // selectedIndex = base.CreateStringOptionsSelector("选项", selectedIndex, 
+            // (newIndex) => {
+            //     Debug.Log($"选项变化: {selectedIndex} → {newIndex}");
+            // }, 
+            // 0, 0, null, null, new string[] { "选项1", "选项2", "选项3" }, "这是选项的Tooltip提示");
+        protected int CreateStringOptionsSelector(string label, int currentIndex, Action<int> onIndexChanged = null, float labelWidth = 0, 
+                                           float enumWidth = 0, GUIStyle style = null, GUIStyle labelStyle = null, string[] stringOptions = null, string tooltip = null)
+        {
+            if (stringOptions == null || stringOptions.Length == 0)
+            {
+                Debug.LogError("字符串选项数组不能为空");
+                return currentIndex;
+            }
+            
+            // 确保当前索引在有效范围内
+            currentIndex = Mathf.Clamp(currentIndex, 0, stringOptions.Length - 1);
+            
+            EditorGUI.BeginChangeCheck();
+            
+            // 创建选项数组用于显示
+            var options = new GUIContent[stringOptions.Length];
+            for (var i = 0; i < stringOptions.Length; i++)
+            {
+                options[i] = new GUIContent(stringOptions[i]);
+            }
+            
+            // 使用水平布局手动控制标签和选择器的位置
+            EditorGUILayout.BeginHorizontal();
+            
+            // 创建带Tooltip的标签内容
+            var labelContent = new GUIContent(label, tooltip);
+            
+            // 显示标签 - 支持自定义标签样式和Tooltip
+            if (labelWidth > 0)
+            {
+                if (labelStyle != null)
+                {
+                    EditorGUILayout.LabelField(labelContent, labelStyle, GUILayout.Width(labelWidth));
+                }
+                else
+                {
+                    EditorGUILayout.LabelField(labelContent, GUILayout.Width(labelWidth));
+                }
+            }
+            else
+            {
+                if (labelStyle != null)
+                {
+                    EditorGUILayout.LabelField(labelContent, labelStyle);
+                }
+                else
+                {
+                    EditorGUILayout.LabelField(labelContent);
+                }
+            }
+            
+            // 显示弹出式选择器 - 支持自定义宽度和样式
+            int newIndex;
+            if (enumWidth > 0 && style != null)
+            {
+                newIndex = EditorGUILayout.Popup(currentIndex, options, style, GUILayout.Width(enumWidth));
+            }
+            else if (enumWidth > 0)
+            {
+                newIndex = EditorGUILayout.Popup(currentIndex, options, GUILayout.Width(enumWidth));
+            }
+            else if (style != null)
+            {
+                newIndex = EditorGUILayout.Popup(currentIndex, options, style);
+            }
+            else
+            {
+                newIndex = EditorGUILayout.Popup(currentIndex, options);
+            }
+            
+            EditorGUILayout.EndHorizontal();
+            
+            bool indexChanged = EditorGUI.EndChangeCheck();
+            
+            if (indexChanged)
+            {
+                // 调用索引变化回调函数
+                onIndexChanged?.Invoke(newIndex);
+                
+                // 强制重绘窗口以更新显示
+                Parent?.Repaint();
+                
+                return newIndex;
+            }
+            
+            return currentIndex;
+        }
+
+        /// 创建纯色纹理
+        /// <param name="width">纹理宽度</param>
+        /// <param name="height">纹理高度</param>
+        /// <param name="color">纹理颜色</param>
+        /// <returns>创建的纹理</returns>
+        public Texture2D CreateColorTexture(int width, int height, Color color)
+        {
+            Texture2D texture = new Texture2D(width, height);
+            Color[] pixels = new Color[width * height];
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = color;
+            }
+            texture.SetPixels(pixels);
+            texture.Apply();
+            // 正确设置HideFlags.HideAndDontSave，避免Unity编辑器试图持久化临时纹理
+            // 这解决了断言失败：'!(o->TestHideFlag(Object::kDontSaveInEditor) && (options & kAllowDontSaveObjectsToBePersistent) == 0)'
+            texture.hideFlags = HideFlags.HideAndDontSave;
+            return texture;
+        }
+    }
+
+    /// VicTools 主窗口 - 优化版本
+    public class VicToolsWindow : EditorWindow
+    {
+        // Windows API：实时查询键盘按键状态（用于 GenericMenu 回调中检测修饰键）
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+        private const int VK_CONTROL = 0x11;
+        private static bool IsCtrlHeldNow => (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+
+        // ── 菜单/下拉图标缓存(VicToolsIconLoader 创建,Unity 不会自动回收) ──
+        // 按路径缓存避免每次 ShowXxxDropdown 调用 BuildXxxItems 都重新解码一遍 PNG
+        // 在 OnDestroy 中通过 VicToolsIconLoader.ReleaseAll(_ownedDropdownIcons) 统一释放
+        private static readonly Dictionary<string, Texture2D> _itemIconCache = new Dictionary<string, Texture2D>();
+        private static readonly List<Texture2D> _ownedDropdownIcons = new List<Texture2D>();
+        // 窗口标题栏图标(ShowWindow 中赋值给 window.titleContent),同样需要持引用 + 释放
+        private static Texture2D _titleIcon;
+
+        private SubWindow[] _windows;
+        public SubWindow CurrentWindow;
+        
+        // 全局选中对象数量 - 所有子窗口共享
+        public int globalSelectedObjectsCount;
+        
+        // 窗口大小管理
+        private Vector2 _previousWindowSize = Vector2.zero;
+        private bool _isPerformanceAnalyzerActive;
+        private Vector2 _performanceAnalyzerSize = new(497, 1132);   //性能分析器窗口大小
+        private Vector2 _normalWindowSize = new(497, 600);           //常规窗口默认尺寸
+        private bool _needsWindowSizeUpdate;                          //标记需要更新窗口尺寸
+        
+        // 窗口配置界面显示状态
+        private bool _showWindowOrderConfig;
+        
+        // 停靠式窗口设置 - 当窗口停靠状态时不自动设置窗口尺寸
+        private bool _disableDockedWindowAutoSize = true;
+        
+        // 窗口持久化相关
+        private Vector2 _lastWindowPosition = Vector2.zero;
+        private Vector2 _lastWindowSize = Vector2.zero;
+        private int _windowRestoreAttempts; // 窗口状态恢复尝试次数
+        private const int MaxWindowRestoreAttempts = 3; // 最大恢复尝试次数
+
+        // 多种菜单项入口，提供更灵活的使用方式
+        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ]", false, 1800)]
+        public static void ShowWindow()
+        {
+            var window = (VicToolsWindow)GetWindow(typeof(VicToolsWindow));
+            if (!window) return;
+            // Set the window name and icon.
+            // 走公共 VicToolsIconLoader 解码原始 PNG 字节 —— 强制 RGBA32 + readable,免受平台压缩 / isReadable=0 影响
+            // 路径修正：scenestools-1.png 实际位于 Packages/com.youdoo.victools/Editor/Icons~/,
+            //          原 Assets/Editor/Icons~/ 路径不存在,AssetDatabase.LoadAssetAtPath 静默返回 null
+            if (_titleIcon == null)
+            {
+                _titleIcon = VicToolsIconLoader.LoadPngIcon("Packages/com.youdoo.victools/Editor/Icons~/wu.png");
+                if (_titleIcon != null) _ownedDropdownIcons.Add(_titleIcon);
+            }
+            window.titleContent = new GUIContent($"VicTools(YD) {VicToolsConfig.Ver}", _titleIcon);
+            window.minSize = new Vector2(497, 400); // 最小宽度，最小高度
+            window.maxSize = new Vector2(1200, 1700);    // 最大宽度，最大高度
+            window.Show();
+        }
+
+        // 动态菜单项 - 使用MenuItem的validate函数来避免硬编码依赖
+        // [MenuItem("Tools/VicTools/场景工具", false, 2001)]
+        // public static void ShowScenesWindow()
+        // {
+        //     ShowWindowByTypeName("ScenesTools");
+        // }
+
+        // ReSharper disable Unity.PerformanceAnalysis
+        private void InitSubWindows()
+        {
+            // 延迟初始化子窗口，避免在序列化过程中创建对象
+            var subWindowTypes = FindAllSubWindowTypes();
+            var subWindows = new List<SubWindow>();
+            
+            foreach (var type in subWindowTypes)
+            {
+                try
+                {
+                    // 延迟创建子窗口实例，确保在适当的时机创建
+                    var subWindow = CreateSubWindowInstance(type);
+                    if (subWindow == null) continue;
+                    subWindows.Add(subWindow);
+                    Debug.Log($"成功加载子窗口: {subWindow.Name} ({type.Name})");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"无法加载子窗口类型 {type.Name}: {ex.Message}");
+                }
+            }
+            
+            // 按自定义固定顺序排列子窗口
+            _windows = OrderSubWindowsByCustomSequence(subWindows.ToArray());
+            
+            if (_windows.Length == 0)
+            {
+                Debug.LogWarning("未找到任何子窗口，请确保有继承自SubWindow的类存在");
+            }
+        }
+        
+        /// 查找所有继承自SubWindow的子窗口类型
+        private static Type[] FindAllSubWindowTypes()
+        {
+            var subWindowType = typeof(SubWindow);
+            var allTypes = AppDomain.CurrentDomain.GetAssemblies()
+                .SelectMany(assembly => assembly.GetTypes())
+                .Where(type => 
+                    type.IsClass && 
+                    !type.IsAbstract && 
+                    type.IsSubclassOf(subWindowType))
+                .ToArray();
+            
+            return allTypes;
+        }
+        
+        /// 创建子窗口实例
+        private SubWindow CreateSubWindowInstance(Type type)
+        {
+            try
+            {
+                // 获取构造函数参数
+                var constructors = type.GetConstructors();
+                if (constructors.Length == 0)
+                {
+                    Debug.LogWarning($"子窗口类型 {type.Name} 没有可用的构造函数");
+                    return null;
+                }
+                
+                // 使用第一个构造函数
+                var constructor = constructors[0];
+                var parameters = constructor.GetParameters();
+                
+                if (parameters.Length == 2 && 
+                    parameters[0].ParameterType == typeof(string) &&
+                    parameters[1].ParameterType == typeof(EditorWindow))
+                {
+                    // 使用默认名称（类名）创建实例
+                    var windowName = GetDefaultWindowName(type);
+                    return (SubWindow)constructor.Invoke(new object[] { windowName, this });
+                }
+                else
+                {
+                    Debug.LogWarning($"子窗口类型 {type.Name} 的构造函数签名不匹配");
+                    return null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"创建子窗口实例失败 {type.Name}: {ex}");
+                return null;
+            }
+        }
+        
+        /// 获取子窗口的默认名称
+        private static string GetDefaultWindowName(Type type)
+        {
+            // 移除"SubWindow"、"Window"等后缀
+            var name = type.Name;
+            if (name.EndsWith("SubWindow"))
+                name = name[..^"SubWindow".Length];
+            else if (name.EndsWith("Window"))
+                name = name[..^"Window".Length];
+            else if (name.EndsWith("Tools"))
+                name = name[..^"Tools".Length];
+                
+            return name;
+        }
+
+        /// 按自定义固定顺序排列子窗口
+        /// <param name="subWindows">子窗口数组</param>
+        /// <returns>按自定义顺序排列的子窗口数组</returns>
+        private SubWindow[] OrderSubWindowsByCustomSequence(SubWindow[] subWindows)
+        {
+            // 从EditorPrefs加载自定义顺序，如果没有则使用默认顺序
+            var customOrder = LoadCustomWindowOrder();
+            
+            // 如果EditorPrefs中没有保存的顺序，使用默认顺序并保存
+            if (customOrder == null || customOrder.Length == 0)
+            {
+                customOrder = new[]
+                {
+                    "ScenesTools",           // 场景工具 - 最常用
+                    "ProjectTools",          // 项目工具
+                    "ShaderMaterialFinder",  // 着色器材质查找器
+                    "ObjectDuplicator",      // 批量复制工具 - 规则排列/随机摆放
+                    ScenePerformanceAnalyzer.WindowName        // 性能分析器 - 重要工具
+                };
+                SaveCustomWindowOrder(customOrder);
+            }
+
+            var orderedWindows = customOrder.Select(windowName => subWindows.FirstOrDefault(w => w.Name == windowName)).Where(window => window != null).ToList();
+            
+            // 首先按自定义顺序添加窗口
+
+            // 然后添加不在自定义顺序中的其他窗口（按名称排序）
+            var remainingWindows = subWindows.Where(w => !customOrder.Contains(w.Name))
+                                            .OrderBy(w => w.Name)
+                                            .ToList();
+            orderedWindows.AddRange(remainingWindows);
+            
+            return orderedWindows.ToArray();
+        }
+        
+        /// 从EditorPrefs加载自定义窗口顺序
+        /// <returns>窗口名称数组</returns>
+        private static string[] LoadCustomWindowOrder()
+        {
+            var orderString = EditorPrefs.GetString("VicTools.CustomWindowOrder", "");
+            return string.IsNullOrEmpty(orderString) ? Array.Empty<string>() : orderString.Split(';');
+        }
+        
+        /// 保存自定义窗口顺序到EditorPrefs
+        /// <param name="order">窗口名称数组</param>
+        private void SaveCustomWindowOrder(string[] order)
+        {
+            string orderString = string.Join(";", order);
+            EditorPrefs.SetString("VicTools.CustomWindowOrder", orderString);
+        }
+        
+        /// 获取所有可用的子窗口名称
+        /// <returns>子窗口名称数组</returns>
+        private string[] GetAllWindowNames()
+        {
+            if (_windows == null)
+                InitSubWindows();
+                
+            return (_windows ?? Array.Empty<SubWindow>()).Select(w => w.Name).ToArray();
+        }
+        
+        // 拖拽排序相关变量 - 完全重写版本
+        private int _dragFromIndex = -1;
+        private int _dragToIndex = -1;
+        private bool _isDragging;
+        private readonly List<Rect> _itemRects = new();
+        private Vector2 _scrollGui;
+        
+        /// 显示设置界面
+        private void ShowWindowOrderConfig()
+        {
+            var style = EditorStyle.Get;
+            var currentOrder = LoadCustomWindowOrder();
+            var allWindows = GetAllWindowNames();
+            
+            // 创建新的顺序列表，只包含当前实际存在的有效子窗口
+            _scrollGui = EditorGUILayout.BeginScrollView(_scrollGui, style.area, GUILayout.ExpandHeight(true));
+            // 首先添加当前顺序中存在的有效窗口
+            var newOrder = currentOrder.Where(windowName => allWindows.Contains(windowName)).ToList();
+
+            // 然后添加任何在当前顺序中缺失的有效窗口
+            foreach (var windowName in allWindows)
+            {
+                if (!newOrder.Contains(windowName))
+                {
+                    newOrder.Add(windowName);
+                }
+            }
+            
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("窗口顺序配置", style.subheading2);
+            EditorGUILayout.HelpBox("拖拽窗口名称来重新排序。新添加的窗口会自动出现在列表末尾。", MessageType.Info);
+            
+            // 重置项目矩形列表
+            _itemRects.Clear();
+            
+            // 显示当前顺序
+            for (var i = 0; i < newOrder.Count; i++)
+            {
+                EditorGUILayout.BeginHorizontal();
+                
+                // 创建可拖拽的标签区域
+                var labelRect = EditorGUILayout.GetControlRect();
+                var displayText = $"{i + 1}. {newOrder[i]}";
+                
+                // 保存项目矩形用于拖拽计算
+                _itemRects.Add(labelRect);
+                
+                // 高亮显示拖拽目标位置
+                if (_isDragging && _dragToIndex == i)
+                {
+                    GUI.backgroundColor = new Color(0.8f, 0.9f, 1.0f, 0.5f);
+                    GUI.Box(new Rect(labelRect.x, labelRect.y, labelRect.width, labelRect.height), "");
+                    GUI.backgroundColor = Color.white;
+                }
+                
+                // 显示窗口名称
+                EditorGUI.LabelField(labelRect, displayText);
+                
+                // 处理拖拽事件
+                HandleDragEvents(labelRect, i);
+                
+                // 保留原有的上下移动按钮作为备用
+                // 上移按钮（第一个元素不能上移）
+                if (i > 0 && GUILayout.Button("↑", GUILayout.Width(25)))
+                {
+                    (newOrder[i], newOrder[i - 1]) = (newOrder[i - 1], newOrder[i]);
+                    SaveCustomWindowOrder(newOrder.ToArray());
+                    Repaint(); // 立即重绘以显示变化
+                }
+                // 下移按钮（最后一个元素不能下移）
+                if (i < newOrder.Count - 1 && GUILayout.Button("↓", GUILayout.Width(25)))
+                {
+                    (newOrder[i], newOrder[i + 1]) = (newOrder[i + 1], newOrder[i]);
+                    SaveCustomWindowOrder(newOrder.ToArray());
+                    Repaint(); // 立即重绘以显示变化
+                }
+                EditorGUILayout.Space(25);
+                
+                EditorGUILayout.EndHorizontal();
+            }
+            
+            // 处理拖拽逻辑
+            HandleDragLogic(newOrder);
+            
+            EditorGUILayout.Space();
+            EditorGUILayout.BeginHorizontal();
+            GUI.backgroundColor = Color.red;
+            // 应用按钮 - 手动触发重新排序
+            if (GUILayout.Button("应用并刷新窗口顺序", GUILayout.Height(30)))
+            {
+                ApplyWindowOrderChanges();
+                Repaint();
+            }
+            GUI.backgroundColor = Color.white;
+            // 重置按钮
+            if (GUILayout.Button("重置为默认顺序", GUILayout.Height(30)))
+            {
+                var defaultOrder = new[]
+                {
+                    "ScenesTools",
+                    "ProjectTools",
+                    "ShaderMaterialFinder",
+                    "ObjectDuplicator",
+                    ScenePerformanceAnalyzer.WindowName
+                };
+                SaveCustomWindowOrder(defaultOrder);
+                ApplyWindowOrderChanges(); // 应用窗口顺序变化
+                Repaint();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space();
+            EditorGUILayout.Space();
+            
+            // 停靠式窗口设置
+            EditorGUILayout.LabelField("窗口行为设置", style.subheading2);
+            
+            EditorGUILayout.HelpBox("启用此选项后，当窗口处于停靠状态时将不会自动调整窗口尺寸。", MessageType.Info);
+            // 停靠式窗口选项 - 当窗口停靠状态时不自动设置窗口尺寸
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("停靠式窗口", GUILayout.Width(70));
+            EditorGUI.BeginChangeCheck();
+            _disableDockedWindowAutoSize = EditorGUILayout.Toggle(_disableDockedWindowAutoSize, GUILayout.Width(30));
+            if (EditorGUI.EndChangeCheck())
+            {
+                // 立即保存设置到 EditorPrefs
+                EditorPrefs.SetBool("VicTools.DisableDockedWindowAutoSize", _disableDockedWindowAutoSize);
+                Debug.Log($"停靠式窗口设置已更新: {_disableDockedWindowAutoSize}");
+            }
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.EndScrollView();
+        }
+        
+        /// 处理拖拽逻辑 - 完全重写版本
+        /// <param name="orderList">窗口顺序列表</param>
+        private void HandleDragLogic(List<string> orderList)
+        {
+            Event currentEvent = Event.current;
+            
+            // 全局拖拽目标位置计算 - 使用精确的项目矩形
+            if (_isDragging && currentEvent.type == EventType.MouseDrag)
+            {
+                // 计算鼠标位置对应的目标索引
+                int newDragToIndex = -1;
+                
+                // 检查鼠标是否在某个项目区域内
+                for (int i = 0; i < _itemRects.Count; i++)
+                {
+                    if (_itemRects[i].Contains(currentEvent.mousePosition))
+                    {
+                        // 鼠标在项目区域内，计算具体位置
+                        float relativeY = currentEvent.mousePosition.y - _itemRects[i].y;
+                        float halfHeight = _itemRects[i].height * 0.5f;
+                        
+                        if (relativeY < halfHeight)
+                        {
+                            // 鼠标在上半部分，拖拽到当前项之前
+                            newDragToIndex = i;
+                        }
+                        else
+                        {
+                            // 鼠标在下半部分，拖拽到当前项之后
+                            newDragToIndex = i + 1;
+                        }
+                        break;
+                    }
+                }
+                
+                // 如果鼠标不在任何项目区域内，检查是否在列表末尾
+                if (newDragToIndex == -1 && _itemRects.Count > 0)
+                {
+                    Rect lastRect = _itemRects[_itemRects.Count - 1];
+                    if (currentEvent.mousePosition.y > lastRect.y + lastRect.height)
+                    {
+                        newDragToIndex = orderList.Count; // 拖拽到列表末尾
+                    }
+                    else if (currentEvent.mousePosition.y < _itemRects[0].y)
+                    {
+                        newDragToIndex = 0; // 拖拽到列表开头
+                    }
+                }
+                
+                // 确保目标索引在有效范围内
+                if (newDragToIndex != -1)
+                {
+                    newDragToIndex = Mathf.Clamp(newDragToIndex, 0, orderList.Count);
+                    _dragToIndex = newDragToIndex;
+                }
+                
+                currentEvent.Use();
+            }
+            
+            // 拖拽结束处理
+            if (_isDragging && currentEvent.type == EventType.MouseUp)
+            {
+                if (_dragFromIndex >= 0 && _dragToIndex >= 0 && _dragFromIndex != _dragToIndex)
+                {
+                    // 执行拖拽操作
+                    string draggedItem = orderList[_dragFromIndex];
+                    orderList.RemoveAt(_dragFromIndex);
+                    
+                    // 如果拖拽到列表末尾，需要调整索引
+                    if (_dragToIndex >= orderList.Count)
+                    {
+                        orderList.Add(draggedItem);
+                    }
+                    else
+                    {
+                        orderList.Insert(_dragToIndex, draggedItem);
+                    }
+                    
+                    // 保存新的顺序
+                    SaveCustomWindowOrder(orderList.ToArray());
+                    
+                    // 强制重绘以显示变化
+                    Repaint();
+                }
+                
+                // 重置拖拽状态
+                _isDragging = false;
+                _dragFromIndex = -1;
+                _dragToIndex = -1;
+                currentEvent.Use();
+            }
+            
+            // 在拖拽过程中也需要重绘以更新拖拽指示器
+            if (_isDragging)
+            {
+                Repaint();
+            }
+            
+            // 绘制拖拽指示器 - 在拖拽过程中显示拖拽中的项
+            if (!_isDragging || _dragFromIndex < 0 || _dragFromIndex >= orderList.Count) return;
+            // 绘制拖拽中的项
+            var dragRect = new Rect(currentEvent.mousePosition.x - 100, 
+                currentEvent.mousePosition.y - 10, 
+                200, 20);
+                
+            // 使用更明显的拖拽样式
+            var dragStyle = new GUIStyle(EditorStyles.helpBox)
+            {
+                normal =
+                {
+                    textColor = Color.black
+                },
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter
+            };
+
+            GUI.Box(dragRect, orderList[_dragFromIndex], dragStyle);
+            GUI.backgroundColor = Color.white;
+        }
+
+        /// 处理拖拽事件
+        /// <param name="rect">标签区域矩形</param>
+        /// <param name="index">当前项的索引</param>
+        private void HandleDragEvents(Rect rect, int index)
+        {
+            var currentEvent = Event.current;
+            
+            // 鼠标按下开始拖拽
+            if (currentEvent.type == EventType.MouseDown && rect.Contains(currentEvent.mousePosition))
+            {
+                _dragFromIndex = index;
+                _dragToIndex = index;
+                _isDragging = true;
+                currentEvent.Use();
+                return;
+            }
+            
+            // 鼠标悬停时显示拖拽指针
+            if (!_isDragging && rect.Contains(currentEvent.mousePosition))
+            {
+                EditorGUIUtility.AddCursorRect(rect, MouseCursor.MoveArrow);
+            }
+        }
+        
+        /// 应用窗口顺序变化 - 重新初始化子窗口数组
+        private void ApplyWindowOrderChanges()
+        {
+            // 保存当前窗口状态
+            var currentWindowName = CurrentWindow?.Name;
+            
+            // 重新初始化子窗口数组
+            InitSubWindows();
+            
+            // 恢复当前窗口
+            if (!string.IsNullOrEmpty(currentWindowName))
+            {
+                var targetWindow = _windows.FirstOrDefault(w => w.Name == currentWindowName);
+                if (targetWindow != null)
+                {
+                    SetCurrentWindow(targetWindow);
+                }
+            }
+            
+            Debug.Log("窗口顺序已更新并立即生效");
+        }
+
+        private void OnLostFocus()
+        {
+            if (CurrentWindow != null)
+                CurrentWindow.OnLostFocus();
+        }
+
+        private void OnFocus()
+        {
+            if (CurrentWindow != null)
+                CurrentWindow.OnFocus();
+        }
+
+        private void OnDestroy()
+        {
+            // 在窗口销毁前保存常规窗口尺寸
+            SaveNormalWindowSize();
+            
+            // 在窗口销毁前保存窗口位置和停靠状态
+            SaveWindowPositionAndDockState();
+            
+            // 在窗口销毁前，如果当前是性能分析窗口，恢复常规窗口尺寸
+            // 确保Unity保存的是常规窗口尺寸而不是性能分析窗口尺寸
+            if (_isPerformanceAnalyzerActive && CurrentWindow != null && CurrentWindow.Name == ScenePerformanceAnalyzer.WindowName)
+            {
+                // 恢复之前保存的常规窗口大小
+                if (_previousWindowSize != Vector2.zero)
+                {
+                    position = new Rect(position.position, _previousWindowSize);
+                }
+                _isPerformanceAnalyzerActive = false;
+            }
+            
+            if (CurrentWindow != null)
+                CurrentWindow.OnDestroy();
+
+            // 释放通过 VicToolsIconLoader 解码出来的 owned 贴图(标题栏图标 + 下拉菜单图标)
+            // 一次性销毁 _itemIconCache 中的所有 Texture2D 实例并清空缓存
+            VicToolsIconLoader.ReleaseAll(_ownedDropdownIcons);
+            _itemIconCache.Clear();
+            _titleIcon = null;
+        }
+
+        private void OnEnable()
+        {
+            // 注册选择变化事件 - 在主窗口中注册，确保在任何窗口状态下都能更新选中数量
+            Selection.selectionChanged += OnSelectionChanged;
+
+            // 延迟初始化子窗口，避免在序列化过程中创建对象
+            if (_windows == null)
+            {
+                try
+                {
+                    InitSubWindows();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"初始化VicTools子窗口失败: {ex.Message}");
+                    // 创建空的子窗口数组以避免空引用
+                    _windows = Array.Empty<SubWindow>();
+                }
+            }
+
+            // 获取上次打开的窗口并恢复
+            if (CurrentWindow == null && _windows is { Length: > 0 })
+            {
+                var currentWindowName = EditorPrefs.GetString("VicTools.Window.currentWindow", _windows[0].Name);
+                foreach (var t in _windows)
+                {
+                    if (t.Name != currentWindowName) continue;
+                    CurrentWindow = t;
+                    break;
+                }
+            }
+
+            // 加载停靠式窗口设置
+            _disableDockedWindowAutoSize = EditorPrefs.GetBool("VicTools.DisableDockedWindowAutoSize", false);
+
+            // 加载保存的常规窗口尺寸 - 仅在停靠式窗口设置关闭时执行
+            if (!_disableDockedWindowAutoSize)
+            {
+                LoadNormalWindowSize();
+            }
+
+            // 加载窗口位置和停靠状态 - 仅在停靠式窗口设置关闭时执行
+            if (!_disableDockedWindowAutoSize)
+            {
+                LoadWindowPositionAndDockState();
+            }
+
+            // 启用当前窗口
+            if (CurrentWindow != null)
+            {
+                try
+                {
+                    CurrentWindow.OnEnable();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"启用子窗口 {CurrentWindow.Name} 失败: {ex.Message}");
+                }
+            }
+            
+            // 确保窗口显示在前面
+            Focus();
+            
+            // 延迟执行窗口位置恢复，确保窗口完全初始化后再应用位置
+            EditorApplication.delayCall += DelayedWindowRestore;
+
+            // 延迟做一次 TMP 字体健康检查，捕获"刚导入/未导入 TMP Essential"导致的 material 空字段问题
+#if TMP_PRESENT
+            EditorApplication.delayCall += ScheduleTmpFontHealthCheck;
+#endif
+        }
+        
+        /// 延迟窗口恢复 - 确保窗口完全初始化后再应用位置和尺寸
+        private void DelayedWindowRestore()
+        {
+            // 移除回调，确保只执行一次
+            EditorApplication.delayCall -= DelayedWindowRestore;
+            
+            // 增加恢复尝试次数
+            _windowRestoreAttempts++;
+            
+            // 使用增强的停靠状态检测
+            bool isCurrentlyDocked = IsWindowDockedEnhanced();
+            
+            // 如果窗口不是停靠状态且停靠式窗口设置关闭，重新加载并应用窗口位置和尺寸
+            if (!isCurrentlyDocked && !_disableDockedWindowAutoSize)
+            {
+                // 重新加载并应用窗口位置
+                LoadWindowPositionAndDockState();
+                
+                // 强制重绘窗口，确保窗口位置和尺寸变化立即生效
+                Repaint();
+                
+                // 延迟再次检查窗口状态，确保恢复成功
+                if (_windowRestoreAttempts < MaxWindowRestoreAttempts)
+                {
+                    EditorApplication.delayCall += () => {
+                        if (this != null)
+                        {
+                            // 再次检查窗口状态，确保位置和尺寸已正确恢复
+                            bool finalDockedState = IsWindowDockedEnhanced();
+                            if (!finalDockedState)
+                            {
+                                // 如果仍然不是停靠状态，再次应用保存的位置
+                                LoadWindowPositionAndDockState();
+                                Repaint();
+                                
+                                // 最终保险措施：如果仍然失败，强制应用窗口位置
+                                EditorApplication.delayCall += () => {
+                                    if (this != null && !IsWindowDockedEnhanced())
+                                    {
+                                        ForceApplyWindowPosition();
+                                    }
+                                };
+                            }
+                            else
+                            {
+                            }
+                        }
+                    };
+                }
+                else
+                {
+                    // 达到最大尝试次数，使用强制恢复方法
+                    if (!IsWindowDockedEnhanced())
+                    {
+                        ForceApplyWindowPosition();
+                    }
+                }
+            }
+            else
+            {
+                // 窗口处于停靠状态，完成恢复过程
+            }
+            
+            // 增强的窗口焦点管理 - 确保窗口显示在前面
+            EnsureWindowFocus();
+        }
+        
+        /// 确保窗口获得焦点并显示在前面 - 优化版本
+        private void EnsureWindowFocus()
+        {
+            // 方法1：立即获取焦点
+            Focus();
+            
+            // 方法2：延迟焦点尝试，确保窗口完全初始化
+            EditorApplication.delayCall += () => {
+                if (this != null)
+                {
+                    // 再次获取焦点
+                    Focus();
+                    
+                    // 强制重绘窗口
+                    Repaint();
+                    
+                    // 如果仍然不是焦点窗口，使用更直接的方法
+                    if (!focusedWindow)
+                    {
+                        // 使用ShowUtility确保窗口显示在前面
+                        ShowUtility();
+                        Focus();
+                        Repaint();
+                    }
+                }
+            };
+            
+            // 方法3：最终保险措施 - 在更长延迟后再次尝试
+            EditorApplication.delayCall += () => {
+                if (this != null && !focusedWindow)
+                {
+                    // 使用更安全的方法：直接获取焦点和重绘
+                    Focus();
+                    Repaint();
+                    
+                    // 如果仍然没有焦点，使用ShowUtility方法
+                    if (!focusedWindow)
+                    {
+                        ShowUtility();
+                        Focus();
+                        Repaint();
+                    }
+                }
+            };
+        }
+
+        private void OnDisable()
+        {
+            // 在窗口禁用前保存常规窗口尺寸
+            SaveNormalWindowSize();
+            
+            // 在窗口禁用前保存窗口位置和停靠状态
+            SaveWindowPositionAndDockState();
+            
+            // 在窗口禁用前，如果当前是性能分析窗口，恢复常规窗口尺寸
+            // 这样Unity保存的将是常规窗口尺寸而不是性能分析窗口尺寸
+            if (_isPerformanceAnalyzerActive && CurrentWindow != null && CurrentWindow.Name == ScenePerformanceAnalyzer.WindowName)
+            {
+                // 恢复之前保存的常规窗口大小
+                if (_previousWindowSize != Vector2.zero)
+                {
+                    position = new Rect(position.position, _previousWindowSize);
+                }
+                _isPerformanceAnalyzerActive = false;
+            }
+
+            // 取消注册选择变化事件
+            Selection.selectionChanged -= OnSelectionChanged;
+
+            // 禁用当前窗口
+            if (CurrentWindow != null)
+                CurrentWindow.OnDisable();
+        }
+
+        /// 处理选择变化事件 - 更新全局选中对象数量
+        private void OnSelectionChanged()
+        {
+            // 更新全局选中对象数量
+            globalSelectedObjectsCount = Selection.gameObjects.Length;
+            
+            // 强制重绘窗口以更新显示
+            Repaint();
+        }
+
+        private void OnHierarchyChange()
+        {
+            if (CurrentWindow != null)
+                CurrentWindow.OnHierarchyChange();
+        }
+
+        void OnGUI()
+        {
+            // 检查是否需要更新窗口尺寸 - 在第一次GUI绘制时强制执行窗口尺寸更新（仅在停靠式窗口设置关闭时）
+            if (_needsWindowSizeUpdate && !_disableDockedWindowAutoSize)
+            {
+                _needsWindowSizeUpdate = false;
+                
+                // 强制执行窗口尺寸更新
+                if (CurrentWindow == null || CurrentWindow.Name != ScenePerformanceAnalyzer.WindowName)
+                {
+                    // 确保应用保存的常规窗口尺寸
+                    Vector2 clampedSize = new Vector2(
+                        Mathf.Clamp(_normalWindowSize.x, minSize.x, maxSize.x),
+                        Mathf.Clamp(_normalWindowSize.y, minSize.y, maxSize.y)
+                    );
+                    
+                    // 强制应用窗口尺寸
+                    position = new Rect(position.position, clampedSize);
+                    
+                    // 强制重绘窗口，确保窗口尺寸变化立即生效
+                    Repaint();
+                }
+            }
+            
+            // 实时检测窗口尺寸变化并保存常规窗口尺寸（仅在停靠式窗口设置关闭时）
+            if (CurrentWindow != null && CurrentWindow.Name != ScenePerformanceAnalyzer.WindowName && !_disableDockedWindowAutoSize)
+            {
+                // 检查窗口尺寸是否发生变化
+                if (position.size != _previousWindowSize)
+                {
+                    // 窗口尺寸发生变化，立即保存常规窗口尺寸
+                    SaveNormalWindowSize();
+                    
+                    // 更新前一个窗口尺寸记录
+                    _previousWindowSize = position.size;
+                }
+            }
+            
+            // 实时检测窗口位置变化并保存窗口位置和停靠状态（仅在停靠式窗口设置关闭时）
+            if ((position.position != _lastWindowPosition || position.size != _lastWindowSize) && !_disableDockedWindowAutoSize)
+            {
+                // 窗口位置或尺寸发生变化，立即保存窗口位置和停靠状态
+                SaveWindowPositionAndDockState();
+                
+                // 更新内部状态记录
+                _lastWindowPosition = position.position;
+                _lastWindowSize = position.size;
+            }
+            
+            var style = EditorStyle.Get;    //  获取自定义样式
+            
+            // 添加帮助和配置按钮 - 放在窗口右上角
+            EditorGUILayout.BeginHorizontal();
+            GUI.backgroundColor = new Color(0.15f, 0.55f, 1.0f); 
+            if (GUILayout.Button(new GUIContent("Edit ▾", "编辑工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
+            {
+                var rect = GUILayoutUtility.GetLastRect();
+                ShowMenuDropdown(rect);
+            }
+            if (GUILayout.Button(new GUIContent("Tools ▾", "组件工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
+            {
+                var rect = GUILayoutUtility.GetLastRect();
+                ShowToolsDropdown(rect);
+            }
+            GUI.backgroundColor = Color.green;
+            if (GUILayout.Button(new GUIContent("Material:URP ▾", "创建\\更换 材质（+ Ctrl 点击更换材质）"), GUILayout.Width(94), GUILayout.Height(20)))
+            {
+                var rect = GUILayoutUtility.GetLastRect();
+                ShowMaterialDropdown(rect);
+            }
+            GUI.backgroundColor = Color.white;
+            GUILayout.FlexibleSpace(); // 添加弹性空间，将按钮推到右侧
+            
+            GUIContent label = new GUIContent(EditorGUIUtility.IconContent("d_SocialNetworks.UDNOpen").image, "帮助文档");
+            if (GUILayout.Button(label, new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(62), GUILayout.Height(20)))
+            {
+                Application.OpenURL("https://nyq1lw99l7.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d?from=from_copylink");
+            }
+            EditorGUILayout.Space(10);
+            // 帮助按钮
+            // GUI.backgroundColor = new Color(0.8f, 0.9f, 1.0f); // 浅蓝色背景
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_UnityEditor.ConsoleWindow").image, "版本信息"), new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(22), GUILayout.Height(20)))
+            {
+                ShowHelpDialog();
+            }
+            // 配置按钮：显示齿轮图标（d_Settings 是 Unity 内置合法图标，不会触发 LogError；
+            // 之前用的 d__Popup 含特殊命名在 Unity 2022+ 加载失败会在控制台报错）
+            // 用 GUIStyle.none 让按钮无背景无边框，看起来像纯图标 Label 但仍可点击
+            // 注意：GUIStyle.none 默认 alignment=UpperLeft，会让图标贴左上角
+            // 必须复制出 MiddleCenter 对齐版本（不能直接改静态 GUIStyle.none，会污染全局）
+            if (GUILayout.Button(
+                    new GUIContent(EditorGUIUtility.IconContent("CustomTool").image, "设置"),
+                    new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter },
+                    GUILayout.Width(22), GUILayout.Height(20)))
+            {
+                _showWindowOrderConfig = !_showWindowOrderConfig;
+            }
+
+            EditorGUILayout.EndHorizontal();
+            
+            // 显示菜单栏
+            const int maxButtonsPerRow = 3; // 每行最多显示的按钮数量
+            
+            // 使用更简单可靠的多行显示逻辑
+            EditorGUILayout.BeginVertical();
+            
+            for (var i = 0; i < _windows.Length; i += maxButtonsPerRow)
+            {
+                EditorGUILayout.BeginHorizontal();  
+                
+                // 计算当前行要显示的按钮数量
+                var buttonsInThisRow = Mathf.Min(maxButtonsPerRow, _windows.Length - i);
+                
+                for (var j = 0; j < buttonsInThisRow; j++)
+                {
+                    var buttonIndex = i + j;
+                    // 使用自定义样式
+                    if (GUILayout.Button(_windows[buttonIndex].Name, CurrentWindow == _windows[buttonIndex] ? style.menuButtonSelected : style.menuButton))
+                        SetCurrentWindow(_windows[buttonIndex]);
+                }
+                
+                EditorGUILayout.EndHorizontal();
+            }
+            
+            EditorGUILayout.EndVertical();
+
+            // 添加分隔线 - 分隔菜单按钮与工具界面
+            // GUILayout.Space(5);
+            
+            // 创建更醒目的黄色分隔线
+            GUIStyle separatorStyle = new GUIStyle();
+            separatorStyle.normal.background = CreateColorTexture(1, 1, new Color(0.7f, 0.5f, 0.0f)); // 黄色
+            separatorStyle.normal.background.hideFlags = HideFlags.HideAndDontSave;
+            GUILayout.Box("", separatorStyle, GUILayout.Height(4), GUILayout.ExpandWidth(true));
+            
+            GUILayout.Space(5);
+
+            // 显示窗口配置界面或当前窗口内容
+            if (_showWindowOrderConfig)
+            {
+                ShowWindowOrderConfig();
+            }
+            else if (CurrentWindow != null)
+            {
+                CurrentWindow.OnGUI();
+            }
+            else
+            {
+                GUIStyle customStyle = new GUIStyle(GUI.skin.label != null ? GUI.skin.label : new GUIStyle());
+                customStyle.fontSize = 22;
+                customStyle.fontStyle = FontStyle.Bold;
+                customStyle.normal.textColor = new Color(0.5f, 0.3f, 0.3f);
+                customStyle.hover.textColor = new Color(0.5f, 0.3f, 0.3f);
+                customStyle.alignment = TextAnchor.MiddleCenter; // 文字居中
+                GUILayout.Label("↑ 请在上面选择一个工具 ↑", customStyle);
+            }
+        }
+
+        void SetCurrentWindow(SubWindow window)
+        {
+            // 如果当前在窗口配置界面中，并且点击的是工具标签按钮（不是配置界面内部的按钮），则自动退出配置界面
+            // 通过检查window是否在windows数组中来确定是否是工具标签点击
+            if (_showWindowOrderConfig && _windows != null && _windows.Contains(window))
+            {
+                _showWindowOrderConfig = false;
+            }
+            
+            // 检查是否禁用停靠式窗口自动尺寸设置
+            bool shouldDisableAutoSize = _disableDockedWindowAutoSize;
+            
+            // 窗口大小管理逻辑 - 仅在未禁用自动尺寸设置时执行
+            if (!shouldDisableAutoSize)
+            {
+                bool wasPerformanceAnalyzer = _isPerformanceAnalyzerActive;
+                bool isSwitchingToPerformanceAnalyzer = window.Name == ScenePerformanceAnalyzer.WindowName;
+                
+                // 如果之前是性能分析器，现在切换到其他窗口，保存当前大小并恢复之前的大小
+                if (wasPerformanceAnalyzer && !isSwitchingToPerformanceAnalyzer)
+                {
+                    // 保存性能分析器窗口的专属尺寸
+                    _performanceAnalyzerSize = position.size;
+                    
+                    // 恢复之前保存的常规窗口大小
+                    if (_previousWindowSize != Vector2.zero)
+                    {
+                        position = new Rect(position.position, _previousWindowSize);
+                    }
+                    _isPerformanceAnalyzerActive = false;
+                    
+                    // 额外确保：当从性能分析窗口切换到常规窗口时，重新加载并应用保存的常规窗口尺寸（仅在停靠式窗口设置关闭时）
+                    if (!_disableDockedWindowAutoSize)
+                    {
+                        LoadNormalWindowSize();
+                        
+                        // 标记需要更新窗口尺寸，确保在第一次点击时就能生效
+                        _needsWindowSizeUpdate = true;
+                    }
+                    
+                    // 强制重绘窗口，确保窗口尺寸变化立即生效
+                    Repaint();
+                }
+                // 如果切换到性能分析器，保存当前大小并设置新大小
+                else if (!wasPerformanceAnalyzer && isSwitchingToPerformanceAnalyzer)
+                {
+                    // 保存当前常规窗口大小以便切换回来时恢复
+                    _previousWindowSize = position.size;
+                    
+                    // 设置性能分析器窗口大小
+                    position = new Rect(position.position, _performanceAnalyzerSize);
+                    _isPerformanceAnalyzerActive = true;
+                    
+                    // 强制重绘窗口，确保窗口尺寸变化立即生效
+                    Repaint();
+                }
+                // 如果是从一个常规窗口切换到另一个常规窗口，确保应用正确的常规窗口尺寸
+                else if (!wasPerformanceAnalyzer)
+                {
+                    // 确保应用保存的常规窗口尺寸（仅在停靠式窗口设置关闭时）
+                    if (!_disableDockedWindowAutoSize)
+                    {
+                        LoadNormalWindowSize();
+                        
+                        // 标记需要更新窗口尺寸，确保在第一次点击时就能生效
+                        _needsWindowSizeUpdate = true;
+                    }
+                    
+                    // 强制重绘窗口，确保窗口尺寸变化立即生效
+                    Repaint();
+                }
+            }
+            else
+            {
+                // 当禁用自动尺寸设置时，清除相关标记
+                _needsWindowSizeUpdate = false;
+            }
+            
+            if (CurrentWindow != null)
+            {
+                CurrentWindow.OnLostFocus();
+                CurrentWindow.OnDisable();
+            }
+            
+            CurrentWindow = window;
+            CurrentWindow.OnFocus();
+            CurrentWindow.OnEnable();
+            EditorPrefs.SetString("VicTools.Window.currentWindow", window.Name);
+        }
+
+        /// 通过类型名称设置当前窗口
+        public void SetCurrentWindowByTypeName(string typeName)
+        {
+            if (_windows == null)
+                InitSubWindows();
+
+            if (_windows == null) return;
+            var targetWindow = _windows.FirstOrDefault(w => w.GetType().Name == typeName);
+            if (targetWindow != null)
+            {
+                SetCurrentWindow(targetWindow);
+            }
+            else
+            {
+                Debug.LogWarning($"未找到类型为 {typeName} 的子窗口");
+            }
+        }
+
+        /// 显示帮助对话框 - 使用自定义窗口支持链接
+        private void ShowHelpDialog()
+        {
+            VicToolsHelpWindow.ShowWindow();
+        }
+
+        // ═══════════════════════════════════════════
+        //  AdvancedDropdown 菜单项构建
+        //  图标路径替换说明：将 LoadItemIcon("xxx") 中的路径替换为你的图标 png 路径
+        //  例如: "Packages/com.youdoo.victools/Editor/Icons/lattice.png"
+        //  路径支持 Assets/ 或 Packages/ 下的图片资源
+        // ═══════════════════════════════════════════
+
+        private List<VicDropdownItemData> BuildToolsItems()
+        {
+            return new List<VicDropdownItemData>
+            {
+                new VicDropdownItemData("（禁用）主材质自定义灯光工具: ComputeBuffer", EditorGUIUtility.IconContent("Invalid").image as Texture2D, () =>
+                    EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/CustomLightTool: ComputeBufferTool")),
+                new VicDropdownItemData("轮廓描边辅助工具: SmoothedNormal", LoadItemIcon(""), () =>
+                    EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal")),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("创建 晶格变形控制器（Lattice）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/icon_SelectLattIcon.png"), CreateLatticeController),
+                new VicDropdownItemData("创建 混合变形控制（BlendShape）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/BlendShape.png"), CreateBlendShapeAni),
+                new VicDropdownItemData("创建 主材质自发光闪烁控制（EmissionFlicker）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/T_flicker.png"), CreateEmissionFlicker),
+                new VicDropdownItemData("创建 无限循环滚动（RoadScroll）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/T_RoadScroll.png"), RoadScrollEditorHelper.CreateRoadScroll),
+                new VicDropdownItemData("创建 旋转动画控制组件（RotationController）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/RotationController.png"), CreateRotationController),
+                new VicDropdownItemData("创建 探照灯体积雾（SpotLightVolume）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/SpotLightVolume.png"), CreateSpotLightVolume),
+                new VicDropdownItemData("创建 FPS帧率显示（当前场景）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/FPS.png"), CreateFPSDisplay),
+                VicDropdownItemData.Separator(),
+#if TMP_PRESENT
+                new VicDropdownItemData("修复 TMP 字体资源（material 字段为空的 TMP_FontAsset）", LoadItemIcon(""), FixTmpFontAssetMaterials),
+#endif
+            };
+        }
+
+        private List<VicDropdownItemData> BuildMenuItems()
+        {
+            return new List<VicDropdownItemData>
+            {
+                new VicDropdownItemData("校正(PBR_Mobile)烘焙高光方向", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/lightDir.png"), SceneTools.ApplyLightDirectionToMaterials),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("镜像模型→X轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.X)),
+                new VicDropdownItemData("镜像模型→Y轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.Y)),
+                new VicDropdownItemData("镜像模型→Z轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.Z)),
+                new VicDropdownItemData("→保存镜像Mesh", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/resetPosition.png"), SaveMirrorMeshes),
+            };
+        }
+
+        private List<VicDropdownItemData> BuildMaterialItems()
+        {
+            return new List<VicDropdownItemData>
+            {
+                new VicDropdownItemData("PBR_Mobile_NEW（自定义PBR主材质_新版）（支持辅光）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile_NEW")),
+                new VicDropdownItemData("PBR_Mobile（自定义PBR主材质_旧版）（禁用辅光）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile")),
+                new VicDropdownItemData("PBR_Mobile_Trans（自定义PBR主材质透明版）(基于PreZ)", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans")),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("AddTrans（透明叠加，可模拟灯光照射）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_light.png"), () => CreateMaterialFromShader("Custom/AddTrans")),
+                new VicDropdownItemData("Glass_carWindow（玻璃材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_glass.png"), () => CreateMaterialFromShader("Custom/Glass_carWindow")),
+                new VicDropdownItemData("Glass_MobileNew（折射效果水、果冻材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_glass.png"), () => CreateMaterialFromShader("Custom/Glass_MobileNew")),
+                new VicDropdownItemData("Custom_Ocean（海面材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_ocean.png"), () => CreateMaterialFromShader("Custom/Custom_Ocean")),
+                new VicDropdownItemData("Tree_Trans（植被树叶透明飘动材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_leaf.png"), () => CreateMaterialFromShader("Custom/Tree_Trans")),
+                new VicDropdownItemData("Grass（草地材质，可交互）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_grass.png"), () => CreateMaterialFromShader("Custom/Grass")),
+                new VicDropdownItemData("Texture（纯贴图颜色Alpha透明）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_tex.png"), () => CreateMaterialFromShader("Custom/Texture")),
+                new VicDropdownItemData("Texture-UI（UI专用适配 Canvas 渲染）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_tex.png"), () => CreateMaterialFromShader("Custom/Texture-UI")),
+                new VicDropdownItemData("FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_fur.png"), () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC")),
+                new VicDropdownItemData("Custom_Hair（头发材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_hair.png"), () => CreateMaterialFromShader("Custom/Hair")),
+                new VicDropdownItemData("Custom_Toon（卡通材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_toon.png"), () => CreateMaterialFromShader("Custom/Toon")),
+                new VicDropdownItemData("Custom_Snow（雪地材质，可交互）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_snow.png"), () => CreateMaterialFromShader("Custom/Snow")),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("ShadowReceiver（透明地面接收投影）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_gray.png"), () => CreateMaterialFromShader("Custom/ShadowReceiver")),
+                new VicDropdownItemData("TextureGaussianBlur（ScreenColor高斯模糊材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_blur.png"), () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL")),
+                new VicDropdownItemData("Outline（普通描边材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_black.png"), () => CreateMaterialFromShader("Custom/Outline/Outline")),
+                new VicDropdownItemData("OutlineZOffset（轮廓描边材质）Tools ▾: 轮廓描边辅助工具", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_black.png"), () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset")),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("CustomParticle（带法线粒子材质，水渍效果）", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_particle.png"), () => CreateMaterialFromShader("Custom/Fx/CustomParticle")),
+                new VicDropdownItemData("CustomTransCutout（Masked非半透明材质）(基于PreZ)", LoadItemIcon("Packages/com.youdoo.victools/Editor/Icons~/p_red.png"), () => CreateMaterialFromShader("Custom/TransCutout")),
+            };
+        }
+
+        /// 加载菜单项图标，传入资源路径（Assets/ 或 Packages/ 下的 png），为空则返回 null
+        /// <para>走 VicToolsIconLoader 公共函数 + 按路径缓存(同名路径复用同一 Texture2D 实例)，
+        /// 避免每次 ShowXxxDropdown 调用 BuildXxxItems 都重新解码 PNG。</para>
+        /// <para><b>Unity 6：必须去掉 HideFlags.DontSaveInEditor</b>。
+        /// AdvancedDropdown.Show 会把 item.icon 传给原生层长期持有，原生对每个被引用的
+        /// Object 断言 !(kDontSaveInEditor &amp;&amp; !kAllowDontSaveObjectsToBePersistent)，
+        /// 而 LoadPngIcon 默认打的 HideAndDontSave 恰好含 DontSaveInEditor →
+        /// "Assertion failed on expression: '!(o-&gt;TestHideFlag(Object::kDontSaveInEditor) ...)'"。
+        /// 该豁免开关在 Unity 6 的托管程序集中不存在（无公开 API 可开），只能在此处规避：
+        /// 仅清掉 DontSaveInEditor 这一个位，HideInHierarchy / NotEditable /
+        /// DontSaveInBuild / DontUnloadUnusedAsset 全部保留。
+        /// 无副作用的依据：这些贴图只被 AdvancedDropdownItem 与非序列化的静态字典引用，
+        /// 不存在被序列化进场景/预制体的路径，无需靠 DontSaveInEditor 兜底；
+        /// DontUnloadUnusedAsset 保留后，Resources.UnloadUnusedAssets 不会把它们回收。</para>
+        private static Texture2D LoadItemIcon(string assetPath)
+        {
+            if (string.IsNullOrEmpty(assetPath)) return null;
+            if (_itemIconCache.TryGetValue(assetPath, out var cached) && cached != null)
+                return cached;
+            var tex = VicToolsIconLoader.LoadPngIcon(assetPath);
+            if (tex != null)
+            {
+                // Unity 6 AdvancedDropdown 原生断言规避，详见上方说明
+                tex.hideFlags &= ~HideFlags.DontSaveInEditor;
+                _itemIconCache[assetPath] = tex;
+                _ownedDropdownIcons.Add(tex);
+            }
+            return tex;
+        }
+
+        /// 镜像轴枚举
+    public enum MirrorAxis
+    {
+        X = 0,
+        Y = 1,
+        Z = 2
+    }
+
+    /// 对选中的模型对象进行安全镜像（非负值缩放 + 法线/切线/碰撞体/BlendShape 同步修正）。
+    /// <para>为什么要"非负值缩放"？</para>
+    /// <list type="bullet">
+    ///   <item>Unity 引擎对负值缩放（scale.x &lt; 0 等）的法线计算依赖 <c>unity_WorldTransformParameters</c> 判定，
+    ///   当 <c>unity_Scale.w = 0</c>（负缩放）时反面剔除会"翻转"，模型背面变成正面出现。但**法线本身方向不会翻转**，
+    ///   光照方向相反 → 出现"黑面 / 阴影错乱"。</item>
+    ///   <item>使用负值缩放虽然不需要重写 Mesh，但会破坏物理碰撞体（如 BoxCollider）、遮挡剔除、
+    ///   材质 SRP Batcher 关键字批处理，且与 GPU Instancing 兼容性差。</item>
+    /// </list>
+    /// <para>非负值缩放 + 顶点翻转方案：</para>
+    /// <list type="bullet">
+    ///   <item>顶点 × axis_sign（X 镜像：x *= -1；Y 镜像：y *= -1；Z 镜像：z *= -1）</item>
+    ///   <item>法线 × (-1)（镜像后法线方向翻转，必须手动取反）</item>
+    ///   <item>切线 × (-1) （仅 w 分量翻转 XYZ 不变，因为镜像后切线空间方向相反）</item>
+    ///   <item>三角形绕序翻转（顺时针 ↔ 逆时针）使背面可见</item>
+    ///   <item>翻转 Mesh 索引，否则模型会"内外翻"</item>
+    ///   <item>对于 SkinnedMeshRenderer：同时翻转 BlendShape 关键帧，使表情/形变镜像后方向正确</item>
+    ///   <item>对于 MeshCollider：重建顶点，避免物理碰撞体缺失</item>
+    /// </list>
+    /// <para>作用范围：仅选中对象（不递归子节点）。</para>
+    private static void MirrorSelectedModel(MirrorAxis axis)
+    {
+        var selectedObjects = Selection.gameObjects;
+        if (selectedObjects == null || selectedObjects.Length == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "请先在场景中选中模型对象", "确定");
+            return;
+        }
+
+        // 开启 Undo 组：所有镜像相关修改（Renderer 引用、Collider 引用、新 Mesh 创建）合并到一次 Undo
+        int undoGroup = Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName("镜像模型");
+
+        // 收集所有 Renderer（含激活的子物体，但 Parent 不选中时子物体单独处理）
+        var allRenderers = new System.Collections.Generic.List<Renderer>();
+        foreach (var sel in selectedObjects)
+        {
+            // Renderer 自身
+            var rend = sel.GetComponent<Renderer>();
+            if (rend != null && !allRenderers.Contains(rend)) allRenderers.Add(rend);
+
+            // 用户原话"只处理选中对象"——不递归子节点，但若选中本身是 Renderer 父节点时自动取自己的 Renderer
+            // 注意：这里不再扩展 GetComponentsInChildren，符合"只处理选中对象"的语义
+        }
+
+        if (allRenderers.Count == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "选中的对象没有 Renderer 组件", "确定");
+            return;
+        }
+
+        // 扫描与勾选分离：先扫出所有未勾选 Read/Write 的源 FBX，弹窗让用户确认；
+        // 选"勾选并镜像" 才真正 SaveAndReimport + 镜像；选"取消" 则不勾选也不镜像。
+        var pendingImporters = new List<ModelImporter>();
+        var pendingPaths = new List<string>();
+        var scanDonePaths = new HashSet<string>();
+        foreach (var scanRend in allRenderers)
+        {
+            if (scanRend == null) continue;
+            Mesh scanMesh = scanRend is SkinnedMeshRenderer scanSmr
+                ? scanSmr.sharedMesh
+                : (scanRend.TryGetComponent<MeshFilter>(out var scanMf) ? scanMf.sharedMesh : null);
+            if (scanMesh == null) continue;
+            string scanPath = AssetDatabase.GetAssetPath(scanMesh);
+            if (string.IsNullOrEmpty(scanPath)) continue;  // 运行时 Mesh，无源资产
+            if (!scanDonePaths.Add(scanPath)) continue;   // 同源 FBX 只检测一次
+            var scanImporter = AssetImporter.GetAtPath(scanPath) as ModelImporter;
+            if (scanImporter == null) continue;  // 不是 ModelImporter 类型（可能是 .asset Mesh）
+            if (scanImporter.isReadable) continue; // 已勾选，跳过
+            pendingImporters.Add(scanImporter);
+            pendingPaths.Add(scanPath);
+        }
+        if (pendingImporters.Count > 0)
+        {
+            // 构造预览报告（尚未实际修改任何资产）
+            var preview = new System.Text.StringBuilder();
+            foreach (var p in pendingPaths) preview.AppendLine($"  • {p}");
+
+            // 弹窗让用户决定是否勾选 + 镜像
+            // 选"取消"则完全不动：不勾选 Read/Write，也不镜像
+            bool proceed = EditorUtility.DisplayDialog("检测到源 FBX 未勾选 Read/Write",
+                $"以下 {pendingImporters.Count} 个源 FBX 的 Read/Write Enabled 未勾选：\n\n{preview}\n\n" +
+                "原因：镜像操作需要源 Mesh 可读以复制顶点/法线/切线/BlendShape 完整通道，\n" +
+                "否则镜像后会丢失 boneWeights / bindposes / blendShapes 等 SkinnedMeshRenderer 必需数据。\n\n" +
+                "提示：\n• 点【勾选并镜像】自动勾选 Read/Write 并执行镜像\n• 点【取消】则不勾选也不镜像（保持原状）",
+                "勾选并镜像", "取消");
+            if (!proceed)
+            {
+                Debug.Log("[VicTools] 用户取消操作：未勾选 Read/Write，也未执行镜像。");
+                return;
+            }
+
+            // 用户确认后才真正执行勾选 + Reimport
+            var report = new System.Text.StringBuilder();
+            for (int i = 0; i < pendingImporters.Count; i++)
+            {
+                pendingImporters[i].isReadable = true;
+                pendingImporters[i].SaveAndReimport();
+                report.AppendLine($"  ✓ {pendingPaths[i]}");
+            }
+            Debug.Log($"[VicTools] 已自动勾选 {pendingImporters.Count} 个源 FBX 的 Read/Write Enabled：\n{report}\n" +
+                      "（镜像操作需要源 Mesh 可读以复制顶点/法线/切线/BlendShape 完整通道）");
+        }
+
+        // 用字典跟踪：同一源 Mesh（含运行时 _MirrorX 等）只镜像一次，所有引用它的 Renderer/Collider 共享新 Mesh。
+        // 关键：之前用 HashSet 去重会把重复的 Renderer 给 continue 掉，导致 sharedMesh 没被更新；
+        // 现在改用 Dictionary 复用，重复 Renderer 也能拿到 newMesh 正确替换。
+        var sourceToMirror = new System.Collections.Generic.Dictionary<Mesh, Mesh>();
+        int rendererCount = 0;
+
+        foreach (var rend in allRenderers)
+        {
+            if (rend == null) continue;
+            Mesh srcMesh = rend is SkinnedMeshRenderer smr
+                ? smr.sharedMesh
+                : (rend.TryGetComponent<MeshFilter>(out var mf) ? mf.sharedMesh : null);
+            if (srcMesh == null) continue;
+
+            // 同一源 Mesh 复用之前已生成的镜像（不重复创建）
+            if (!sourceToMirror.TryGetValue(srcMesh, out Mesh newMesh))
+            {
+                // 1) 优先查找磁盘上已存在的同名+同方向镜像资产（如之前"保存镜像"已写入 xxx_MirrorX.asset），
+                //    命中就直接复用，省去 MirrorMesh 复制步骤，也避免同目录出现 xxx 1.asset。
+                string srcAssetPath = AssetDatabase.GetAssetPath(srcMesh);
+                string existingMirrorPath = TryGetMirrorAssetPath(srcMesh, srcAssetPath, axis);
+                if (!string.IsNullOrEmpty(existingMirrorPath))
+                {
+                    var existingMirror = AssetDatabase.LoadAssetAtPath<Mesh>(existingMirrorPath);
+                    if (existingMirror != null)
+                    {
+                        newMesh = existingMirror;
+                    }
+                }
+
+                // 2) 磁盘上没有才新建
+                if (newMesh == null)
+                {
+                    newMesh = MirrorMesh(srcMesh, axis);
+                    if (newMesh == null) continue;
+                    // 只在新 Mesh 首次入字典时注册一次 Undo 创建（复用磁盘资产无需注册）
+                    Undo.RegisterCreatedObjectUndo(newMesh, "镜像 Mesh");
+                }
+
+                sourceToMirror[srcMesh] = newMesh;
+            }
+
+            // 替换 Renderer 上的 Mesh（先记录原状态以便 Undo 还原）
+            if (rend is SkinnedMeshRenderer smr2)
+            {
+                Undo.RegisterCompleteObjectUndo(smr2, "镜像模型");
+                smr2.sharedMesh = newMesh;
+            }
+            else if (rend.TryGetComponent<MeshFilter>(out var mf2))
+            {
+                // Renderer 自身 + MeshFilter 都要记录（Renderer 在父，MeshFilter 在同节点）
+                Undo.RegisterCompleteObjectUndo(rend, "镜像模型");
+                Undo.RegisterCompleteObjectUndo(mf2, "镜像模型");
+                mf2.sharedMesh = newMesh;
+            }
+
+            rendererCount++;
+        }
+
+        // 重建 MeshCollider（MeshCollider 缓存了原始顶点，镜像后必须重置）
+        // 直接按 Mesh 引用查表，不再依赖名称匹配（再镜像层叠后名称不可靠）
+        foreach (var go in selectedObjects)
+        {
+            var colliders = go.GetComponents<MeshCollider>();
+            foreach (var collider in colliders)
+            {
+                if (collider == null || collider.sharedMesh == null) continue;
+                if (sourceToMirror.TryGetValue(collider.sharedMesh, out Mesh newColliderMesh))
+                {
+                    Undo.RegisterCompleteObjectUndo(collider, "镜像模型");
+                    collider.sharedMesh = newColliderMesh;
+                }
+            }
+        }
+
+        // 折叠所有镜像相关 Undo 为一个原子操作
+        Undo.CollapseUndoOperations(undoGroup);
+
+        Debug.Log($"[镜像] 已完成 {axis} 轴镜像，处理了 {rendererCount} 个 Renderer");
+    }
+
+    /// 把选中对象上"已被镜像的 Mesh"批量保存为 .asset 资产，避免重新打开场景后引用丢失。
+    /// <para>典型工作流：</para>
+    /// <list type="number">
+    ///   <item>用"镜像模型→X/Y/Z 轴"在内存中产生镜像 Mesh（默认 HideAndDontSave，仅在当前会话有效）。</item>
+    ///   <item>选中要保存的镜像对象（可批量），执行本菜单。</item>
+    ///   <item>镜像 Mesh 会被持久化为 xxx_MirrorX/Y/Z.asset 放到"同名源 Mesh 所在的目录"下。</item>
+    /// </list>
+    /// <para>筛选规则：</para>
+    /// <list type="bullet">
+    ///   <item>只处理 mesh.name 末尾带 _MirrorX / _MirrorY / _MirrorZ 后缀的 Mesh；其余跳过。</item>
+    ///   <item>已经保存为资产（<see cref="AssetDatabase.Contains"/>）的 Mesh 跳过，避免重复。</item>
+    ///   <item>"同名源 Mesh"由活动场景里所有 Renderer 共享的、不带后缀的 Mesh 来反查定位。</item>
+    /// </list>
+    /// <para>作用范围：仅选中对象（与 MirrorSelectedModel 一致，不递归子节点）。</para>
+    private static void SaveMirrorMeshes()
+    {
+        // ===== 1. 前置校验：选中和组件 =====
+        var selectedObjects = Selection.gameObjects;
+        if (selectedObjects == null || selectedObjects.Length == 0)
+        {
+            EditorUtility.DisplayDialog("保存镜像",
+                "请先在场景中选中一个或多个模型对象。\n\n" +
+                "本工具仅处理选中对象自身的 Renderer（不递归子节点），" +
+                "且只保存 Mesh 名称末尾带 _MirrorX / _MirrorY / _MirrorZ 后缀的对象。",
+                "确定");
+            return;
+        }
+
+        // 开启 Undo 组，便于把"保存镜像"涉及到的镜像 Mesh hideFlags、命名等修改合并到一次 Undo
+        int undoGroup = Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName("保存镜像");
+
+        // 收集选中对象的 Renderer（仅自身，不递归子节点，与 MirrorSelectedModel 保持一致）
+        var selectedRenderers = new List<Renderer>();
+        foreach (var sel in selectedObjects)
+        {
+            var rend = sel.GetComponent<Renderer>();
+            if (rend != null && !selectedRenderers.Contains(rend)) selectedRenderers.Add(rend);
+        }
+        if (selectedRenderers.Count == 0)
+        {
+            EditorUtility.DisplayDialog("保存镜像",
+                "选中的对象都没有 Renderer 组件（MeshRenderer / SkinnedMeshRenderer）。\n\n" +
+                "请选中至少一个含 Renderer 的镜像模型对象再试。",
+                "确定");
+            Undo.CollapseUndoOperations(undoGroup);
+            return;
+        }
+
+        // ===== 2. 收集所有已加载 mesh 的"名称 → 资产路径"映射 =====
+        // 覆盖场景 Renderer 引用、Prefab 引用，以及 MirrorSelectedModel 替换 sharedMesh 后
+        // 不再被 Renderer 引用的源 mesh。
+        var nameToAssetPaths = new Dictionary<string, List<string>>();
+        var allLoadedMeshes = Resources.FindObjectsOfTypeAll<Mesh>();
+        foreach (var m in allLoadedMeshes)
+        {
+            if (m == null || string.IsNullOrEmpty(m.name)) continue;
+            string p = AssetDatabase.GetAssetPath(m);
+            if (string.IsNullOrEmpty(p)) continue;  // 跳过运行时 mesh / 临时 mesh
+            if (!nameToAssetPaths.TryGetValue(m.name, out var list))
+            {
+                list = new List<string>();
+                nameToAssetPaths[m.name] = list;
+            }
+            list.Add(p);
+        }
+
+        // ===== 3. 批量处理：按 Renderer 遍历，分类计数并累积示例 =====
+        const int sampleShown = 3;
+        int savedCount = 0;
+        int skippedNonMirror = 0;
+        int skippedAlreadyAsset = 0;
+        int noSourceFound = 0;
+        int sampleNonMirror = 0, sampleAlreadyAsset = 0, sampleNoSource = 0;
+        bool anyMirrorSeen = false;  // 用于判断"完全选了源对象" vs "选了至少一个镜像对象但都被跳过"
+
+        var savedLog = new System.Text.StringBuilder();
+        var notFoundLog = new System.Text.StringBuilder();
+        var nonMirrorSamples = new System.Text.StringBuilder();
+        var alreadyAssetSamples = new System.Text.StringBuilder();
+        var notFoundSamples = new System.Text.StringBuilder();
+
+        // 按目标路径去重：多个 Renderer 引用同一镜像 Mesh 时不要重复写盘
+        var alreadyWrittenPaths = new HashSet<string>();
+
+        foreach (var rend in selectedRenderers)
+        {
+            if (rend == null) continue;
+            Mesh mirrorMesh = rend is SkinnedMeshRenderer smr2
+                ? smr2.sharedMesh
+                : (rend.TryGetComponent<MeshFilter>(out var mf2) ? mf2.sharedMesh : null);
+            if (mirrorMesh == null) continue;
+
+            string goName = rend.gameObject != null ? rend.gameObject.name : "?";
+            string baseName = StripMirrorSuffix(mirrorMesh.name);
+            bool isMirror = baseName != mirrorMesh.name;
+            if (isMirror) anyMirrorSeen = true;
+
+            // (a) 不带 _MirrorX/Y/Z 后缀（说明用户选的是源对象而不是镜像对象）
+            if (!isMirror)
+            {
+                skippedNonMirror++;
+                if (sampleNonMirror < sampleShown)
+                {
+                    nonMirrorSamples.AppendLine($"    - GameObject '{goName}' 的 Mesh '{mirrorMesh.name}' 不带 _MirrorX/Y/Z 后缀");
+                    sampleNonMirror++;
+                }
+                continue;
+            }
+
+            // (b) 已是项目资产（之前已保存过）
+            if (AssetDatabase.Contains(mirrorMesh))
+            {
+                skippedAlreadyAsset++;
+                if (sampleAlreadyAsset < sampleShown)
+                {
+                    alreadyAssetSamples.AppendLine($"    - GameObject '{goName}' 的 Mesh '{mirrorMesh.name}' 已是项目资产");
+                    sampleAlreadyAsset++;
+                }
+                continue;
+            }
+
+            // (c) 兼容累计后缀（如 xxx_MirrorY_MirrorY → 剥到 xxx）：递归剥到最原始 base name
+            string realBaseName = baseName;
+            int stripDepth = 0;
+            while (IsMirrorSuffixName(realBaseName) && stripDepth < 8)
+            {
+                realBaseName = StripMirrorSuffix(realBaseName);
+                stripDepth++;
+            }
+
+            // (d) 反查源 Mesh 资产路径失败
+            if (!nameToAssetPaths.TryGetValue(realBaseName, out var sourcePaths) || sourcePaths.Count == 0)
+            {
+                noSourceFound++;
+                notFoundLog.AppendLine($"  • {mirrorMesh.name}（已尝试 baseName='{realBaseName}'）");
+                if (sampleNoSource < sampleShown)
+                {
+                    notFoundSamples.AppendLine($"    - GameObject '{goName}' 的 Mesh '{mirrorMesh.name}' 在工程中找不到 baseName='{realBaseName}' 的源资产");
+                    sampleNoSource++;
+                }
+                continue;
+            }
+
+            // (e) 实际保存
+            string srcAssetPath = sourcePaths[0];
+            string dir = System.IO.Path.GetDirectoryName(srcAssetPath)?.Replace('\\', '/');
+            string targetPath = $"{dir}/{mirrorMesh.name}.asset";
+            if (alreadyWrittenPaths.Contains(targetPath)) continue;  // 本批次已有 Renderer 处理过该目标路径
+            targetPath = AssetDatabase.GenerateUniqueAssetPath(targetPath);
+            alreadyWrittenPaths.Add(targetPath);
+
+            mirrorMesh.hideFlags = HideFlags.None;  // 取消 HideAndDontSave
+            AssetDatabase.CreateAsset(mirrorMesh, targetPath);
+            savedLog.AppendLine($"  ✓ {targetPath}");
+            savedCount++;
+        }
+
+        Undo.CollapseUndoOperations(undoGroup);
+
+        // ===== 4. 控制台完整报告 =====
+        if (savedCount > 0)
+        {
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[VicTools] 已保存 {savedCount} 个镜像 Mesh：\n{savedLog}");
+        }
+        if (skippedNonMirror > 0)
+            Debug.Log($"[VicTools] 跳过 {skippedNonMirror} 个不带 _MirrorX/Y/Z 后缀的 Mesh");
+        if (skippedAlreadyAsset > 0)
+            Debug.Log($"[VicTools] 跳过 {skippedAlreadyAsset} 个已是项目资产的镜像 Mesh");
+        if (noSourceFound > 0)
+            Debug.LogWarning($"[VicTools] {noSourceFound} 个镜像 Mesh 在全工程找不到同名源 Mesh，已跳过保存：\n{notFoundLog}");
+
+        // ===== 5. 弹窗反馈：按结果分支给出针对性提示 =====
+        if (savedCount == 0)
+        {
+            // —— 完全没保存成功 ——
+
+            // (i) 特殊情况：所有 Renderer 上的 mesh 都不带 _MirrorX/Y/Z 后缀
+            //     → 大概率用户选错了对象（选成"原始模型"而非"镜像模型"）
+            if (skippedNonMirror > 0 && skippedAlreadyAsset == 0 && noSourceFound == 0 && !anyMirrorSeen)
+            {
+                EditorUtility.DisplayDialog("保存镜像",
+                    $"选中的 {skippedNonMirror} 个对象的 Mesh 都不带 _MirrorX/Y/Z 后缀，无法保存。\n\n" +
+                    "这是常见错误：保存镜像需要选中【已被镜像过的模型对象】（其 Mesh 名称末尾带 _MirrorX/Y/Z），" +
+                    "而不是原始模型对象。\n\n" +
+                    "正确流程：\n" +
+                    "  1. 选要镜像的模型 → 点击【镜像模型→X/Y/Z轴】生成内存镜像\n" +
+                    "  2. 再选中被镜像过的对象 → 点击【保存镜像】写入磁盘\n\n",
+                    "确定");
+                return;
+            }
+
+            // (ii) 通用失败：分类汇总
+            var msg = new System.Text.StringBuilder();
+            msg.AppendLine("未保存任何镜像 Mesh。详细原因：");
+            if (skippedNonMirror > 0)
+            {
+                msg.AppendLine();
+                msg.AppendLine($"【1】{skippedNonMirror} 个 Renderer 上的 Mesh 不带 _MirrorX/Y/Z 后缀（先用\"镜像模型→X/Y/Z轴\"生成镜像）");
+                if (nonMirrorSamples.Length > 0) msg.Append(nonMirrorSamples);
+            }
+            if (skippedAlreadyAsset > 0)
+            {
+                msg.AppendLine();
+                msg.AppendLine($"【2】{skippedAlreadyAsset} 个镜像 Mesh 已是项目资产，无需重复保存");
+                if (alreadyAssetSamples.Length > 0) msg.Append(alreadyAssetSamples);
+            }
+            if (noSourceFound > 0)
+            {
+                msg.AppendLine();
+                msg.AppendLine($"【3】{noSourceFound} 个镜像 Mesh 在工程中找不到同名源资产（需把原始模型放进场景作为参照）");
+                if (notFoundSamples.Length > 0) msg.Append(notFoundSamples);
+                // 末尾附全部未匹配项完整列表（不只示例）
+                if (notFoundLog.Length > 0)
+                {
+                    msg.AppendLine();
+                    msg.AppendLine("全部未匹配的镜像 Mesh：");
+                    msg.Append(notFoundLog);
+                }
+            }
+
+            EditorUtility.DisplayDialog("保存镜像", msg.ToString(), "确定");
+            return;
+        }
+
+        // —— 部分成功：savedCount > 0 但有跳过的项目 → 弹窗汇总 =====
+        if (skippedNonMirror + skippedAlreadyAsset + noSourceFound > 0)
+        {
+            var msg = new System.Text.StringBuilder();
+            msg.AppendLine($"已成功保存 {savedCount} 个镜像 Mesh，但还有 {skippedNonMirror + skippedAlreadyAsset + noSourceFound} 个未处理：");
+            if (skippedNonMirror > 0) msg.AppendLine($"  • {skippedNonMirror} 个 Mesh 不带 _MirrorX/Y/Z 后缀");
+            if (skippedAlreadyAsset > 0) msg.AppendLine($"  • {skippedAlreadyAsset} 个 Mesh 已是项目资产");
+            if (noSourceFound > 0) msg.AppendLine($"  • {noSourceFound} 个 Mesh 全工程找不到同名源 Mesh");
+            msg.AppendLine();
+            msg.AppendLine("完整报告见 Console。");
+            EditorUtility.DisplayDialog("保存镜像 - 部分成功", msg.ToString(), "确定");
+        }
+        // —— 全部成功：savedCount > 0 且无任何跳过 → 不弹窗，只在 Console 报告，避免打扰工作流 ——
+    }
+
+    /// 镜像 Mesh：复制一份顶点数据，执行翻转（顶点 × sign、法线 × -1 / 切线.w × -1 / 三角形绕序翻转），
+    /// 返回新 Mesh（避免修改原 Mesh 资产导致其他引用对象也被镜像）。
+    /// <para>返回 null 表示源 Mesh 没有可被镜像的顶点（处理失败）。</para>
+    private static Mesh MirrorMesh(Mesh srcMesh, MirrorAxis axis)
+    {
+        if (srcMesh == null) return null;
+
+        // 兜底：sRGB 配色模型镜像不会产生可读 Mesh
+        if (srcMesh.vertexCount == 0) return null;
+
+        Vector3[] vertices = srcMesh.vertices;
+        Vector3[] normals = srcMesh.normals;
+        Vector4[] tangents = srcMesh.tangents;
+        int[] triangles = srcMesh.triangles;
+        bool hasNormals = normals != null && normals.Length == vertices.Length;
+        bool hasTangents = tangents != null && tangents.Length == vertices.Length;
+
+        // 1. 顶点 × (-1) on selected axis
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            Vector3 v = vertices[i];
+            switch (axis)
+            {
+                case MirrorAxis.X: v.x = -v.x; break;
+                case MirrorAxis.Y: v.y = -v.y; break;
+                case MirrorAxis.Z: v.z = -v.z; break;
+            }
+            vertices[i] = v;
+        }
+
+        // 2. 法线 × (-1) on selected axis（法线必须随之翻转，否则光照方向错误）
+        if (hasNormals)
+        {
+            for (int i = 0; i < normals.Length; i++)
+            {
+                Vector3 n = normals[i];
+                switch (axis)
+                {
+                    case MirrorAxis.X: n.x = -n.x; break;
+                    case MirrorAxis.Y: n.y = -n.y; break;
+                    case MirrorAxis.Z: n.z = -n.z; break;
+                }
+                normals[i] = n;
+            }
+        }
+
+        // 3. 切线 XYZ × (-1)，w 分量（handedness）翻转
+        if (hasTangents)
+        {
+            for (int i = 0; i < tangents.Length; i++)
+            {
+                Vector4 t = tangents[i];
+                Vector3 t3 = new Vector3(t.x, t.y, t.z);
+                switch (axis)
+                {
+                    case MirrorAxis.X: t3.x = -t3.x; break;
+                    case MirrorAxis.Y: t3.y = -t3.y; break;
+                    case MirrorAxis.Z: t3.z = -t3.z; break;
+                }
+                tangents[i] = new Vector4(t3.x, t3.y, t3.z, -t.w);
+            }
+        }
+
+        // 4. 三角形绕序翻转：每个三角形的 0/1/2 索引颠倒 → 顺时针 ↔ 逆时针
+        //    （Unity 三角面默认逆时针为正面）
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            int tmp = triangles[i + 1];
+            triangles[i + 1] = triangles[i + 2];
+            triangles[i + 2] = tmp;
+        }
+
+        // 5. 复制 Mesh 并写入新数据
+        //    name 用 StripMirrorSuffix 处理过的源名作为基础，避免在已镜像过的 Mesh 上再镜像时
+        //    出现 xxx_MirrorX_MirrorX 这种累积后缀导致文件名过长，也避免 SaveMirrorMeshes 反查 base name 时增加额外的剥后缀次数。
+        Mesh newMesh = new Mesh
+        {
+            name = StripMirrorSuffix(srcMesh.name) + $"_Mirror{(char)('X' + (int)axis)}",
+            vertices = vertices,
+            normals = normals,
+            triangles = triangles,
+            uv = srcMesh.uv,
+            uv2 = srcMesh.uv2,
+            uv3 = srcMesh.uv3,
+            uv4 = srcMesh.uv4,
+            colors = srcMesh.colors,
+            colors32 = srcMesh.colors32,
+            bounds = srcMesh.bounds,
+            hideFlags = HideFlags.HideAndDontSave,
+        };
+        if (hasTangents) newMesh.tangents = tangents;
+
+        // 5.b 复制 SkinnedMeshRenderer 必需的骨骼绑定数据
+        //     （boneWeights + bindposes 是蒙皮网格变形的核心数据，缺失会导致 SkinnedMeshRenderer 失效或警告）
+        if (srcMesh.bindposes != null && srcMesh.bindposes.Length > 0)
+            newMesh.bindposes = srcMesh.bindposes;
+        if (srcMesh.boneWeights != null && srcMesh.boneWeights.Length > 0)
+            newMesh.boneWeights = srcMesh.boneWeights;
+
+        // 6. 翻转 BlendShape 关键帧（SkinnedMeshRenderer 必须）
+        for (int i = 0; i < srcMesh.blendShapeCount; i++)
+        {
+            string shapeName = srcMesh.GetBlendShapeName(i);
+            int frameCount = srcMesh.GetBlendShapeFrameCount(i);
+            for (int f = 0; f < frameCount; f++)
+            {
+                float weight = srcMesh.GetBlendShapeFrameWeight(i, f);
+                // GetBlendShapeFrameVertices 用 out 参数（dv=顶点位移, dn=法线变形, dt=切线变形）
+                Vector3[] deltaV = new Vector3[srcMesh.vertexCount];
+                Vector3[] deltaN = new Vector3[srcMesh.vertexCount];
+                Vector3[] deltaT = new Vector3[srcMesh.vertexCount];
+                srcMesh.GetBlendShapeFrameVertices(i, f, deltaV, deltaN, deltaT);
+
+                Vector3[] newDeltaV = new Vector3[deltaV.Length];
+                Vector3[] newDeltaN = new Vector3[deltaN.Length];
+                Vector3[] newDeltaT = new Vector3[deltaT.Length];
+
+                for (int v = 0; v < deltaV.Length; v++)
+                {
+                    Vector3 dv = deltaV[v];
+                    switch (axis)
+                    {
+                        case MirrorAxis.X: dv.x = -dv.x; break;
+                        case MirrorAxis.Y: dv.y = -dv.y; break;
+                        case MirrorAxis.Z: dv.z = -dv.z; break;
+                    }
+                    newDeltaV[v] = dv;
+
+                    Vector3 dn = deltaN[v];
+                    switch (axis)
+                    {
+                        case MirrorAxis.X: dn.x = -dn.x; break;
+                        case MirrorAxis.Y: dn.y = -dn.y; break;
+                        case MirrorAxis.Z: dn.z = -dn.z; break;
+                    }
+                    newDeltaN[v] = dn;
+
+                    Vector3 dt = deltaT[v];
+                    switch (axis)
+                    {
+                        case MirrorAxis.X: dt.x = -dt.x; break;
+                        case MirrorAxis.Y: dt.y = -dt.y; break;
+                        case MirrorAxis.Z: dt.z = -dt.z; break;
+                    }
+                    newDeltaT[v] = dt;
+                }
+                newMesh.AddBlendShapeFrame(shapeName, weight, newDeltaV, newDeltaN, newDeltaT);
+            }
+        }
+
+        return newMesh;
+    }
+
+    /// 去除 Mesh 名称末尾的镜像后缀（_MirrorX / _MirrorY / _MirrorZ），用于匹配源 Mesh。
+    private static string StripMirrorSuffix(string meshName)
+    {
+        if (string.IsNullOrEmpty(meshName)) return meshName;
+        if (meshName.EndsWith("_MirrorX", System.StringComparison.OrdinalIgnoreCase)) return meshName.Substring(0, meshName.Length - 8);
+        if (meshName.EndsWith("_MirrorY", System.StringComparison.OrdinalIgnoreCase)) return meshName.Substring(0, meshName.Length - 8);
+        if (meshName.EndsWith("_MirrorZ", System.StringComparison.OrdinalIgnoreCase)) return meshName.Substring(0, meshName.Length - 8);
+        return meshName;
+    }
+
+    /// 是否带镜像后缀（_MirrorX / _MirrorY / _MirrorZ），用于"保存镜像"时筛选目标 Mesh。
+    private static bool IsMirrorSuffixName(string meshName)
+    {
+        if (string.IsNullOrEmpty(meshName)) return false;
+        return StripMirrorSuffix(meshName) != meshName;
+    }
+
+    /// 根据源 Mesh 推算"同名+同方向"镜像资产在磁盘上应存在的路径。
+    /// <para>规则：与源资产同目录 + StripMirrorSuffix 后的源名 + 当前轴后缀 + .asset。
+    /// 例如源资产是 <c>Assets/Models/Foo.fbx</c>、srcMesh.name=<c>Bar</c>、axis=Y，
+    /// 则返回 <c>Assets/Models/Bar_MirrorY.asset</c>。源资产无路径（运行时 mesh）时返回 null。</para>
+    /// <para>用于 MirrorSelectedModel 在创建新镜像前查找已有 .asset 复用，避免重复创建。
+    /// 注意：本方法只算路径，文件是否存在由调用方用 AssetDatabase.LoadAssetAtPath 验证。</para>
+    private static string TryGetMirrorAssetPath(Mesh srcMesh, string srcAssetPath, MirrorAxis axis)
+    {
+        if (srcMesh == null || string.IsNullOrEmpty(srcAssetPath)) return null;
+        string dir = System.IO.Path.GetDirectoryName(srcAssetPath)?.Replace('\\', '/');
+        if (string.IsNullOrEmpty(dir)) return null;
+        string baseName = StripMirrorSuffix(srcMesh.name);
+        string axisName = $"_Mirror{(char)('X' + (int)axis)}";
+        return $"{dir}/{baseName}{axisName}.asset";
+    }
+
+    private void CreateRotationController()
+        {
+            GameObject[] selectedObjects = Selection.gameObjects;
+            int count = 0;
+
+            foreach (GameObject obj in selectedObjects)
+            {
+                
+                if (obj.GetComponent<RotationController>() == null)
+                {
+                    obj.AddComponent<RotationController>();
+                    count++;
+                }
+                else
+                {
+                    EditorUtility.DisplayDialog("提示",  $"物体 {obj.name} 已经包含 RotationController 组件。", "确定");
+                }
+            }
+            Debug.Log($"成功为 {count} 个物体添加了组件。");
+        }
+
+        private void CreateSpotLightVolume()
+        {
+            GameObject[] selectedObjects = Selection.gameObjects;
+            if (selectedObjects == null || selectedObjects.Length == 0)
+            {
+                EditorUtility.DisplayDialog("提示", "请先在场景中选择Spot Light对象", "确定");
+                return;
+            }
+
+            int count = 0;
+            int skipped = 0;
+            int notSpot = 0;
+
+            foreach (GameObject obj in selectedObjects)
+            {
+                Light light = obj.GetComponent<Light>();
+                if (light == null || light.type != LightType.Spot)
+                {
+                    notSpot++;
+                    continue;
+                }
+
+                if (obj.GetComponent<SpotLightVolume>() != null)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                Undo.AddComponent<SpotLightVolume>(obj);
+                var volume = obj.GetComponent<SpotLightVolume>();
+                if (volume != null)
+                {
+                    volume.maxDistance = light.range;
+                }
+
+                // 禁用灯光实时照明，仅用于提供角度/颜色参数给体积雾
+                // light.renderMode = LightRenderMode.ForceVertex;
+                // light.intensity = 0f;
+                // light.bounceIntensity = 0f;
+                // light.shadows = LightShadows.None;
+
+                EditorUtility.SetDirty(obj);
+                count++;
+            }
+
+            if (count > 0)
+                Debug.Log($"[VicTools] 已为 {count} 个Spot Light创建SpotLightVolume体积雾效果");
+            if (skipped > 0)
+                Debug.Log($"[VicTools] 跳过 {skipped} 个已存在SpotLightVolume的灯光");
+            if (notSpot > 0)
+                Debug.LogWarning($"[VicTools] {notSpot} 个选中对象不是Spot Light，已忽略");
+            if (count == 0 && skipped == 0)
+                EditorUtility.DisplayDialog("提示", "选中对象中没有可用的Spot Light", "确定");
+        }
+
+        // FPS 专用画布名称：FPS 一律挂在该画布上，不复用场景中的业务 Canvas
+        private const string FPSCanvasName = "Canvas (FPS)";
+
+        /// 在当前场景创建一个 FPS 帧率显示控件（Packages/com.youdoo.victools/Runtime/Scripts/FPS.cs）。
+        ///   - 只使用 FPS 专用画布 "Canvas (FPS)"：已存在则复用，不存在则创建；场景中的业务 Canvas 一律不复用
+        ///     （FPS 文本每 refreshRate 秒刷新一次，会触发所在 Canvas 的整体重建，挂到业务 Canvas 上会拖慢业务 UI
+        ///       并把 UI 重建开销算进 CPU 帧耗时，导致统计数据失真）
+        ///   - Text 组件由 FPS 脚本的 [RequireComponent(typeof(Text))] 自动添加（不再手动创建，避免与脚本冲突）
+        ///   - 文本内容、字号、颜色 等均由 FPS 脚本自己管理（Start / Update），本工具不重复配置
+        private void CreateFPSDisplay()
+        {
+            // 1. 查找已存在的 FPS 专用画布
+            Canvas canvas = FindCanvasByName(FPSCanvasName);
+
+            // 2. 专用画布不存在 → 创建（Overlay 置顶；不加 GraphicRaycaster：FPS 无需交互，避免参与 UI 射线检测）
+            if (canvas == null)
+            {
+                var canvasGO = new GameObject(FPSCanvasName);
+                Undo.RegisterCreatedObjectUndo(canvasGO, "Create FPS Canvas");
+                canvas = canvasGO.AddComponent<Canvas>();
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                canvas.sortingOrder = 32000;
+                canvasGO.AddComponent<CanvasScaler>();
+
+                Debug.Log("[VicTools] 已创建 FPS 专用画布 Canvas (FPS)（不复用场景中的业务 Canvas）");
+            }
+
+            // 3. 避免重复
+            if (canvas.GetComponent<FPS>() != null)
+            {
+                EditorUtility.DisplayDialog("提示",
+                    $"Canvas [{canvas.name}] 上已存在 FPS 组件。\n请勿重复创建。", "确定");
+                Selection.activeGameObject = canvas.gameObject;
+                return;
+            }
+
+            // 4. 挂载 FPS 组件
+            //    [RequireComponent(typeof(Text))] 会自动添加 Text 组件；
+            //    文本的字号 / 颜色 / 内容 均由 FPS.Start() 与 Update() 自己管理。
+            //    本工具不重复配置，避免冲突。
+            var canvasGO2 = canvas.gameObject;
+            try
+            {
+                Undo.AddComponent<FPS>(canvasGO2);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[VicTools] CreateFPSDisplay 失败：{ex.Message}\n{ex.StackTrace}");
+                EditorUtility.DisplayDialog("错误",
+                    $"创建 FPS 显示控件失败：\n{ex.Message}", "确定");
+                return;
+            }
+
+            // 5. 选中 + 标记 dirty
+            Selection.activeGameObject = canvasGO2;
+            EditorUtility.SetDirty(canvasGO2);
+            EditorSceneManager.MarkSceneDirty(canvasGO2.scene);
+
+            Debug.Log($"[VicTools] 已在 Canvas [{canvasGO2.name}] 上挂载 FPS 组件（Text 由 RequireComponent 自动添加）");
+        }
+
+        /// 按名称在所有已加载场景中查找 Canvas（含未激活对象），找不到返回 null。
+        private static Canvas FindCanvasByName(string canvasName)
+        {
+#if UNITY_2023_1_OR_NEWER
+            var allCanvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var allCanvases = UnityEngine.Object.FindObjectsOfType<Canvas>(true);
+#endif
+            foreach (var c in allCanvases)
+            {
+                if (c != null && c.gameObject.name == canvasName) return c;
+            }
+            return null;
+        }
+
+        // 注：RoadScroll 创建工具已迁移到 RoadScrollEditorHelper.cs（约 130 行），避免 VicToolsWindow.cs 体积膨胀。
+        //     菜单注册委托：VicToolsWindow 第 1687 行的 "创建 无限循环滚动道路（RoadScroll）" → RoadScrollEditorHelper.CreateRoadScroll
+
+        private void CreateEmissionFlicker()
+        {
+            GameObject[] selectedObjects = Selection.gameObjects;
+            int count = 0;
+
+            foreach (GameObject obj in selectedObjects)
+            {
+                Renderer renderer = obj.GetComponent<Renderer>();
+
+                if (renderer == null)
+                {
+                    Debug.LogWarning($"[{obj.name}] 没有 Renderer 组件，无法检查 Shader。");
+                    break;
+                }
+                if (renderer.sharedMaterial == null)
+                {
+                    Debug.LogWarning($"[{obj.name}] 没有分配材质。");
+                    break;
+                }
+                if (renderer.sharedMaterial.shader.name == "Custom/PBR_Mobile")
+                {
+                    if (obj.GetComponent<EmissionFlicker>() == null)
+                    {
+                        obj.AddComponent<EmissionFlicker>();
+                        count++;
+                    }
+                }
+                
+            }
+            Debug.Log($"成功为 {count} 个物体添加了组件。");
+        }
+        private void CreateBlendShapeAni()
+        {
+            var selectedObjects = Selection.gameObjects;
+            if (selectedObjects == null || selectedObjects.Length == 0)
+            {
+                EditorUtility.DisplayDialog("提示", "请先在场景中选中模型对象", "确定");
+                return;
+            }
+            // GetComponent 会在物体本身查找，如果找不到则返回 null
+            SkinnedMeshRenderer smr = selectedObjects[0].GetComponent<SkinnedMeshRenderer>();
+
+            // 3. 判断
+            if (smr != null)
+            {
+                // 可以在这里进行后续操作，例如获取 Mesh 或 骨骼信息
+                if (smr.sharedMesh != null)
+                {
+                    Debug.Log($"网格名称: {smr.sharedMesh.name}, 顶点数: {smr.sharedMesh.vertexCount}");
+                    // 2. 检查是否已经挂载了该脚本，避免重复添加
+                    if (selectedObjects[0].GetComponent<BlendShapeAnimator>() == null)
+                    {
+                        // 3. 添加组件
+                        selectedObjects[0].AddComponent<BlendShapeAnimator>();
+                        Debug.Log($"成功将 BlendShapeAnimator 挂载到：{selectedObjects[0].name}");
+                        
+                        // 可选：自动选中该物体以便查看 Inspector
+                        Selection.activeGameObject = selectedObjects[0];
+                    }
+                    else
+                    {
+                        EditorUtility.DisplayDialog("提示", $"物体 {selectedObjects[0].name} 已经包含 BlendShapeAnimator 组件。", "确定");
+                    }
+                }
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("提示", $"选中物体 [{selectedObjects[0].name}] 不包含混合变形 SkinnedMeshRenderer。", "确定");
+            }
+
+        }
+        private void CreateLatticeController()
+        {
+            var selectedObjects = Selection.gameObjects;
+            if (selectedObjects == null || selectedObjects.Length == 0)
+            {
+                EditorUtility.DisplayDialog("提示", "请先在场景中选中模型对象（支持多选）", "确定");
+                return;
+            }
+
+            // 收集所有选中对象的 Renderer（含激活的子物体，未激活的不纳入）
+            var allRenderers = new System.Collections.Generic.List<Renderer>();
+            foreach (var sel in selectedObjects)
+            {
+                var rend = sel.GetComponent<Renderer>();
+                if (rend != null && rend.gameObject.activeInHierarchy && !allRenderers.Contains(rend)) allRenderers.Add(rend);
+                var childRenderers = sel.GetComponentsInChildren<Renderer>(false);
+                foreach (var cr in childRenderers)
+                {
+                    if (!allRenderers.Contains(cr)) allRenderers.Add(cr);
+                }
+            }
+
+            if (allRenderers.Count == 0)
+            {
+                EditorUtility.DisplayDialog("提示", "选中的对象及其子物体都没有 Renderer 组件", "确定");
+                return;
+            }
+
+            // v3.23.3：自动检测 + 勾选源 FBX 资产的 Read/Write Enabled。
+            // 根因：晶格变形的可写 Mesh 走 Instantiate 路径要求源 Mesh 可读（isReadable=true），
+            // 不可读 Mesh 会改走 CreateDeformMeshFromCache 路径（用缓存的 vertices/triangles/normals
+            // 等通道重建），重建的 Mesh 缺少 boneWeights/bindposes/blendShapes 等完整通道，
+            // SkinnedMeshRenderer 渲染时蒙皮数据不全 → 模型看不到/错位。
+            //
+            // v3.23.4：扫描与勾选分离。先扫出需要勾选的 ModelImporter 列表，弹窗让用户确认；
+            // 选"继续"才真正 SaveAndReimport + 创建晶格；选"取消"则什么都不做（不勾选、不创建）。
+            var pendingImporters = new List<ModelImporter>();
+            var pendingPaths = new List<string>();
+            var processedPaths = new HashSet<string>();
+            foreach (var rend in allRenderers)
+            {
+                if (rend == null) continue;
+                var sm = (rend is SkinnedMeshRenderer smr) ? smr.sharedMesh
+                       : (rend.TryGetComponent<MeshFilter>(out var mf) ? mf.sharedMesh : null);
+                if (sm == null) continue;
+                string assetPath = AssetDatabase.GetAssetPath(sm);
+                if (string.IsNullOrEmpty(assetPath)) continue;  // 运行时 Mesh，无源资产
+                if (!processedPaths.Add(assetPath)) continue;   // 同源 FBX 只处理一次
+                var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+                if (importer == null) continue;  // 不是 ModelImporter 类型（可能是 .asset Mesh）
+                if (importer.isReadable) continue; // 已勾选，跳过
+                pendingImporters.Add(importer);
+                pendingPaths.Add(assetPath);
+            }
+            if (pendingImporters.Count > 0)
+            {
+                // 构造预览报告（尚未实际修改任何资产）
+                var preview = new System.Text.StringBuilder();
+                foreach (var p in pendingPaths) preview.AppendLine($"  • {p}");
+
+                // 弹窗让用户决定是否勾选 + 创建晶格
+                // 选"取消"则完全不动：不勾选 Read/Write，也不创建晶格
+                bool proceed = EditorUtility.DisplayDialog("检测到源 FBX 未勾选 Read/Write",
+                    $"以下 {pendingImporters.Count} 个源 FBX 的 Read/Write Enabled 未勾选：\n\n{preview}\n\n" +
+                    "原因：晶格变形器需要源 Mesh 可读以保留 boneWeights/bindposes/blendShapes 等完整通道，\n" +
+                    "否则 SkinnedMeshRenderer 渲染时蒙皮数据不全导致模型不可见。\n\n" +
+                    "提示：\n• 点【勾选并创建】自动勾选 Read/Write 并创建晶格控制器\n• 点【取消】则不勾选也不创建（保持原状）",
+                    "勾选并创建", "取消");
+                if (!proceed)
+                {
+                    Debug.Log("[VicTools] 用户取消操作：未勾选 Read/Write，也未创建晶格。");
+                    return;
+                }
+
+                // 用户确认后才真正执行勾选 + Reimport
+                var report = new System.Text.StringBuilder();
+                for (int i = 0; i < pendingImporters.Count; i++)
+                {
+                    pendingImporters[i].isReadable = true;
+                    pendingImporters[i].SaveAndReimport();
+                    report.AppendLine($"  ✓ {pendingPaths[i]}");
+                }
+                Debug.Log($"[VicTools] 已自动勾选 {pendingImporters.Count} 个源 FBX 的 Read/Write Enabled：\n{report}\n" +
+                          "（晶格变形器需要源 Mesh 可读以保留 boneWeights/bindposes/blendShapes 完整通道）");
+            }
+
+            // 用第一个选中对象的位置和名称
+            GameObject primary = selectedObjects[0];
+            GameObject latticeObj = new GameObject("Lattice_" + primary.name);
+            Undo.RegisterCreatedObjectUndo(latticeObj, "创建晶格控制器");
+            latticeObj.transform.position = primary.transform.position;
+            latticeObj.transform.rotation = primary.transform.rotation;
+
+            // 通过类型名查找 LatticeModifier（跨程序集）
+            var latticeType = System.Type.GetType("LatticeModifier, Vic.Runtim");
+            if (latticeType == null)
+            {
+                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    latticeType = asm.GetType("LatticeModifier");
+                    if (latticeType != null) break;
+                }
+            }
+
+            if (latticeType != null)
+            {
+                // v3.9：统一使用 manualRenderers 作为唯一目标来源
+                // 流程：只创建空壳 GameObject + 挂 LatticeModifier 组件 + 反射设 manualRenderers/targetRoot。
+                // 故意不调 InitializeLattice / ApplyDeformation — 创建后用户需要先在 Inspector
+                // 设置晶格段数（X/Y/Z 段数）、羽化、实时更新等参数，再手动触发"初始化晶格"按钮。
+                // 立即初始化会跳用户参数设置阶段，模型可能因"未配置控制点"看似消失。
+                var lattice = latticeObj.AddComponent(latticeType);
+                var manualField = latticeType.GetField("manualRenderers");
+                if (manualField != null) manualField.SetValue(lattice, allRenderers);
+                // targetRoot 仅在多个对象有共同父级时设置（用于 RepairMissingBindings 的 fallback）
+                if (selectedObjects.Length > 1 || allRenderers.Count > 1)
+                {
+                    var rootField = latticeType.GetField("targetRoot");
+                    if (rootField != null) rootField.SetValue(lattice, primary.transform);
+                }
+            }
+
+            Selection.activeGameObject = latticeObj;
+        }
+
+        /// 显示 Menu 下拉菜单（悬浮 AdvancedDropdown，悬停高亮、支持图标）
+        private void ShowMenuDropdown(Rect buttonRect)
+        {
+            // 锚点下移到按钮底部 + 20px，避免菜单向上展开时盖住按钮
+            var anchor = new Rect(buttonRect.x, buttonRect.yMax + 20f, buttonRect.width, 0f);
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "编辑工具", BuildMenuItems());
+            dropdown.Show(anchor);
+        }
+
+        /// 显示 Tools 下拉菜单
+        private void ShowToolsDropdown(Rect buttonRect)
+        {
+            // 锚点下移到按钮底部 + 20px，与 Menu / Material 下拉保持一致
+            var anchor = new Rect(buttonRect.x + 55f, buttonRect.yMax + 20f, buttonRect.width, 0f);
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "组件工具", BuildToolsItems());
+            dropdown.Show(anchor);
+        }
+        private void ShowMaterialDropdown(Rect buttonRect)
+        {
+            // 锚点下移到按钮底部 + 20px，与 Menu / Tools 下拉保持一致
+            var anchor = new Rect(buttonRect.x + 109f, buttonRect.yMax + 20f, buttonRect.width, 0f);
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "材质", BuildMaterialItems());
+            dropdown.Show(anchor);
+        }
+
+        private static void CreateMaterialFromShader(string shaderName, bool ctrlHeld = false)
+        {
+            Shader shader = Shader.Find(shaderName);
+            if (shader == null)
+            {
+                EditorUtility.DisplayDialog("找不到 Shader", $"未找到 Shader：{shaderName}\n请确认已正确导入。", "确定");
+                return;
+            }
+
+            // Ctrl+点击：直接将选中对象的材质球 Shader 替换为目标 Shader（不创建新材质）
+            var renderers = Selection.gameObjects
+                .Select(go => go.GetComponent<Renderer>())
+                .Where(r => r != null)
+                .ToArray();
+
+            // 使用 Windows API 实时检测 Ctrl 键状态（GenericMenu 回调中 Event.current 已失效）
+            if (IsCtrlHeldNow && renderers.Length > 0)
+            {
+                int changedCount = 0;
+                foreach (var renderer in renderers)
+                {
+                    if (renderer.sharedMaterial == null) continue;
+                    Undo.RecordObject(renderer.sharedMaterial, "Change Shader");
+                    renderer.sharedMaterial.shader = shader;
+                    if (shaderName == "Custom/ShadowReceiver")
+                        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    EditorUtility.SetDirty(renderer.sharedMaterial);
+                    changedCount++;
+                }
+                Debug.Log($"[CreateMaterial] Ctrl+点击：已将 {changedCount} 个对象的材质 Shader 替换为 {shaderName}");
+                return;
+            }
+
+            string defaultName = System.IO.Path.GetFileName(shaderName.Replace("/", "_")) + "_Mat";
+            string savePath = EditorUtility.SaveFilePanelInProject(
+                $"创建 {shaderName} 材质球", defaultName, "mat",
+                $"选择 {shaderName} 材质球的保存位置");
+            if (string.IsNullOrEmpty(savePath)) return;
+
+            var mat = new Material(shader) { name = System.IO.Path.GetFileNameWithoutExtension(savePath) };
+            AssetDatabase.CreateAsset(mat, savePath);
+            AssetDatabase.SaveAssets();
+
+            // 尝试将材质赋予场景中选中的对象
+            if (renderers.Length > 0)
+            {
+                foreach (var renderer in renderers)
+                {
+                    Undo.RecordObject(renderer, "Assign Material");
+                    renderer.sharedMaterial = mat;
+                    // ShadowReceiver shader 只接收阴影不投射，自动关闭 CastShadows
+                    if (shaderName == "Custom/ShadowReceiver")
+                        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    EditorUtility.SetDirty(renderer);
+                }
+                Debug.Log($"[CreateMaterial] 已创建并赋予 {renderers.Length} 个对象：{savePath}");
+            }
+            else
+            {
+                Debug.Log($"[CreateMaterial] 已创建：{savePath}");
+            }
+
+            Selection.activeObject = mat;
+            EditorGUIUtility.PingObject(mat);
+        }
+
+        /// 修复项目里所有 TMP_FontAsset 的 material 字段。
+        /// 现象：TMP_FontAsset 的 material 字段为 null（Asset 上显示 Font Material: None(Material)），
+        ///       Odin Inspector 刷新时调用 FindMaterialReferences 触发 UnassignedReferenceException。
+        /// 根因：TMP Essential Resources 导入不完整，或资源被破坏。
+        /// 修复策略：用 SerializedObject 找到每个 TMP_FontAsset 的 m_Material 字段，
+        ///          从同目录加载 "{name} Material.asset"，写入并保存。
+        private void FixTmpFontAssetMaterials()
+        {
+#if TMP_PRESENT
+            // 1. 收集所有 TMP_FontAsset
+            string[] guids = AssetDatabase.FindAssets("t:TMP_FontAsset");
+            if (guids == null || guids.Length == 0)
+            {
+                EditorUtility.DisplayDialog("修复 TMP 字体资源",
+                    "项目中未找到任何 TMP_FontAsset 资源。\n" +
+                    "如需 TextMeshPro，请先通过 Window > TextMeshPro > Import TMP Essential Resources 导入。", "确定");
+                return;
+            }
+
+            int totalCount = guids.Length;
+            int fixedCount = 0;
+            int skippedCount = 0;
+            int failedCount = 0;
+            var failedList = new List<string>();
+
+            // 暂存"已加载的 Material 资产"避免重复加载
+            var materialCache = new Dictionary<string, Material>();
+
+            try
+            {
+                for (int i = 0; i < guids.Length; i++)
+                {
+                    string fontPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+                    var font = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(fontPath);
+                    if (font == null) continue;
+
+                    EditorUtility.DisplayProgressBar("修复 TMP 字体资源",
+                        $"({i + 1}/{totalCount}) {font.name}", (float)i / totalCount);
+
+                    // 2. 如果 material 已经有效，跳过
+                    if (font.material != null)
+                    {
+                        skippedCount++;
+                        continue;
+                    }
+
+                    // 3. 从同目录加载 "{fontName} Material.asset"
+                    string fontName = font.name;
+                    string dir = System.IO.Path.GetDirectoryName(fontPath)?.Replace('\\', '/');
+                    string matPath = $"{dir}/{fontName} Material.asset";
+
+                    Material mat = null;
+                    if (materialCache.TryGetValue(matPath, out var cached))
+                    {
+                        mat = cached;
+                    }
+                    else
+                    {
+                        mat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+                        if (mat != null) materialCache[matPath] = mat;
+                    }
+
+                    if (mat == null)
+                    {
+                        failedCount++;
+                        failedList.Add($"{fontPath}  →  找不到对应 Material 资产（{matPath}）");
+                        continue;
+                    }
+
+                    // 4. 用 SerializedObject 写入 m_Material（绕过只读限制）
+                    var so = new SerializedObject(font);
+                    var matProp = so.FindProperty("m_Material");
+                    if (matProp == null)
+                    {
+                        failedCount++;
+                        failedList.Add($"{fontPath}  →  找不到 m_Material 序列化字段");
+                        continue;
+                    }
+
+                    matProp.objectReferenceValue = mat;
+                    so.ApplyModifiedPropertiesWithoutUndo();
+                    EditorUtility.SetDirty(font);
+                    fixedCount++;
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+
+            // 5. 保存所有修改
+            if (fixedCount > 0)
+            {
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+
+            // 6. 报告
+            var msg = $"扫描完成：{totalCount} 个 TMP_FontAsset\n" +
+                      $"已修复：{fixedCount} 个\n" +
+                      $"已正常：{skippedCount} 个（material 不为空）\n" +
+                      $"失败：{failedCount} 个\n";
+
+            if (failedList.Count > 0)
+            {
+                msg += "\n失败列表：\n" + string.Join("\n", failedList);
+                msg += "\n\n失败原因：找不到对应的 Material 资产。\n" +
+                       "建议通过 Window > TextMeshPro > Import TMP Essential Resources 重新导入完整资源。";
+            }
+
+            EditorUtility.DisplayDialog("修复 TMP 字体资源", msg, "确定");
+
+            Debug.Log($"[VicTools] TMP_FontAsset 修复完成：扫描 {totalCount}，已修复 {fixedCount}，失败 {failedCount}");
+#endif
+        }
+
+#if TMP_PRESENT
+        // 一次性检查标记，每次窗口开启重置（避免一次窗口内重复弹窗）
+        private bool _tmpFontCheckDone = false;
+
+        /// 调度 TMP 字体健康检查。会话内只检查一次，且仅在用户未永久关闭时执行。
+        /// 入口：OnEnable（窗口打开/域重载）+ AssetPostprocessor（TMP 资源刚导入）。
+        private void ScheduleTmpFontHealthCheck()
+        {
+            if (_tmpFontCheckDone) return;
+            if (EditorPrefs.GetBool("VicTools.TmpFontCheck.disabled", false))
+            {
+                _tmpFontCheckDone = true;
+                return;
+            }
+            _tmpFontCheckDone = true;
+
+            // 额外延迟一拍，确保刚导入/重定向的资源已完成反序列化
+            EditorApplication.delayCall += () =>
+            {
+                if (this == null) return;
+                CheckTmpFontHealthAndNotify();
+            };
+        }
+
+        /// 扫描项目里的 TMP_FontAsset，发现 material 为空时弹窗询问用户。
+        /// 设计为 static 以便 AssetPostprocessor 在窗口未实例化时也能安全调用。
+        private static void CheckTmpFontHealthAndNotify()
+        {
+            try
+            {
+                string[] guids = AssetDatabase.FindAssets("t:TMP_FontAsset");
+                if (guids == null || guids.Length == 0) return;
+
+                int nullMatCount = 0;
+                var brokenPaths = new List<string>();
+
+                for (int i = 0; i < guids.Length; i++)
+                {
+                    string path = AssetDatabase.GUIDToAssetPath(guids[i]);
+                    var font = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(path);
+                    if (font == null) continue;
+                    if (font.material == null)
+                    {
+                        nullMatCount++;
+                        if (brokenPaths.Count < 6) brokenPaths.Add(path);
+                    }
+                }
+
+                if (nullMatCount == 0) return;
+
+                string sample = brokenPaths.Count > 0
+                    ? "\n示例资源：\n  " + string.Join("\n  ", brokenPaths)
+                      + (nullMatCount > brokenPaths.Count ? $"\n  ... 等共 {nullMatCount} 个" : "")
+                    : "";
+
+                string msg = $"检测到 {nullMatCount} 个 TMP_FontAsset 的 material 字段为空。\n\n" +
+                             "可能原因：TMP Essential Resources 导入不完整或被破坏。\n" +
+                             "未修复前，使用 TextMeshProUGUI 的组件可能在 Inspector 刷新时触发 UnassignedReferenceException。\n" +
+                             "若刚执行过 Window > TextMeshPro > Import TMP Essential Resources，可以直接让本工具补齐 material 引用。" +
+                             sample;
+
+                int choice = EditorUtility.DisplayDialogComplex(
+                    "TMP 字体资源异常",
+                    msg,
+                    "立即修复",   // 0
+                    "不再提示",   // 1
+                    "稍后处理");  // 2
+
+                if (choice == 0)
+                {
+                    var win = Resources.FindObjectsOfTypeAll<VicToolsWindow>()?.FirstOrDefault();
+                    if (win != null)
+                    {
+                        win.FixTmpFontAssetMaterials();
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[VicTools] 未找到打开的 VicTools 窗口，请打开后从菜单手动执行'修复 TMP 字体资源'。");
+                    }
+                }
+                else if (choice == 1)
+                {
+                    EditorPrefs.SetBool("VicTools.TmpFontCheck.disabled", true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[VicTools] TMP 字体健康检查失败: {ex.Message}");
+            }
+        }
+#endif
+
+        /// 加载保存的常规窗口尺寸
+        private void LoadNormalWindowSize()
+        {
+            // 从EditorPrefs加载保存的常规窗口尺寸
+            var savedWidth = EditorPrefs.GetFloat("VicTools.NormalWindowSize.Width", _normalWindowSize.x);
+            var savedHeight = EditorPrefs.GetFloat("VicTools.NormalWindowSize.Height", _normalWindowSize.y);
+            
+            _normalWindowSize = new Vector2(savedWidth, savedHeight);
+            
+            // 如果当前不是性能分析窗口，应用保存的常规窗口尺寸
+            if (CurrentWindow != null && CurrentWindow.Name == ScenePerformanceAnalyzer.WindowName) return;
+            // 确保窗口尺寸在合理范围内
+            var clampedSize = new Vector2(
+                Mathf.Clamp(_normalWindowSize.x, minSize.x, maxSize.x),
+                Mathf.Clamp(_normalWindowSize.y, minSize.y, maxSize.y)
+            );
+                
+            // 强制应用保存的常规窗口尺寸，确保窗口切换时立即生效
+            position = new Rect(position.position, clampedSize);
+                
+            // 强制重绘窗口，确保窗口尺寸变化立即生效
+            Repaint();
+        }
+        
+        /// 保存常规窗口尺寸
+        private void SaveNormalWindowSize()
+        {
+            // 只有当当前不是性能分析窗口时才保存常规窗口尺寸
+            if (CurrentWindow is { Name: ScenePerformanceAnalyzer.WindowName }) return;
+            // 保存当前窗口尺寸作为常规窗口尺寸
+            _normalWindowSize = position.size;
+                
+            // 保存到EditorPrefs
+            EditorPrefs.SetFloat("VicTools.NormalWindowSize.Width", _normalWindowSize.x);
+            EditorPrefs.SetFloat("VicTools.NormalWindowSize.Height", _normalWindowSize.y);
+        }
+
+        /// 加载窗口位置和停靠状态 - 增强版本
+        private void LoadWindowPositionAndDockState()
+        {
+            // 使用增强的停靠状态检测
+            var currentDockedState = IsWindowDockedEnhanced();
+            
+            // 加载保存的停靠状态
+            var savedDockedState = EditorPrefs.GetBool("VicTools.WindowIsDocked", false);
+            
+            // 加载窗口位置
+            var savedX = EditorPrefs.GetFloat("VicTools.WindowPosition.X", position.x);
+            var savedY = EditorPrefs.GetFloat("VicTools.WindowPosition.Y", position.y);
+            var savedWidth = EditorPrefs.GetFloat("VicTools.WindowPosition.Width", position.width);
+            var savedHeight = EditorPrefs.GetFloat("VicTools.WindowPosition.Height", position.height);
+            
+            _lastWindowPosition = new Vector2(savedX, savedY);
+            _lastWindowSize = new Vector2(savedWidth, savedHeight);
+            
+            // 只有当窗口不是停靠状态时才恢复保存的位置和尺寸
+            if (!currentDockedState && !savedDockedState)
+            {
+                // 确保窗口位置在屏幕范围内
+                var clampedPosition = new Vector2(
+                    Mathf.Clamp(_lastWindowPosition.x, 0, Screen.currentResolution.width - _lastWindowSize.x),
+                    Mathf.Clamp(_lastWindowPosition.y, 0, Screen.currentResolution.height - _lastWindowSize.y)
+                );
+                
+                // 确保窗口尺寸在合理范围内
+                var clampedSize = new Vector2(
+                    Mathf.Clamp(_lastWindowSize.x, minSize.x, maxSize.x),
+                    Mathf.Clamp(_lastWindowSize.y, minSize.y, maxSize.y)
+                );
+                
+                // 检查保存的位置是否有效（不在屏幕外）
+                var isValidPosition = 
+                    clampedPosition.x >= 0 && 
+                    clampedPosition.y >= 0 &&
+                    clampedPosition.x + clampedSize.x <= Screen.currentResolution.width &&
+                    clampedPosition.y + clampedSize.y <= Screen.currentResolution.height;
+                
+                // 如果位置有效，应用保存的窗口位置和尺寸
+                if (isValidPosition)
+                {
+                    position = new Rect(clampedPosition, clampedSize);
+                    
+                    // 强制重绘窗口，确保窗口位置和尺寸变化立即生效
+                    Repaint();
+                    
+                    Debug.Log($"成功恢复窗口位置: {clampedPosition}, 尺寸: {clampedSize}");
+                }
+                else
+                {
+                    Debug.LogWarning($"保存的窗口位置无效，使用默认位置: {clampedPosition}, 屏幕尺寸: {Screen.currentResolution.width}x{Screen.currentResolution.height}");
+                }
+            }
+            else
+            {
+                Debug.Log($"窗口处于停靠状态，不恢复位置。当前停靠: {currentDockedState}, 保存停靠: {savedDockedState}");
+            }
+            
+            // 更新内部状态
+        }
+
+        /// 保存窗口位置和停靠状态
+        private void SaveWindowPositionAndDockState()
+        {
+            // 检测当前窗口是否停靠
+            bool currentDockedState = IsWindowDocked();
+            
+            // 保存停靠状态
+            EditorPrefs.SetBool("VicTools.WindowIsDocked", currentDockedState);
+            
+            // 只有当窗口不是停靠状态时才保存位置和尺寸
+            if (!currentDockedState)
+            {
+                // 保存窗口位置
+                EditorPrefs.SetFloat("VicTools.WindowPosition.X", position.x);
+                EditorPrefs.SetFloat("VicTools.WindowPosition.Y", position.y);
+                EditorPrefs.SetFloat("VicTools.WindowPosition.Width", position.width);
+                EditorPrefs.SetFloat("VicTools.WindowPosition.Height", position.height);
+            }
+            
+            // 更新内部状态
+            _lastWindowPosition = position.position;
+            _lastWindowSize = position.size;
+        }
+
+        /// 检测窗口是否处于停靠状态 - 增强版本
+        /// <returns>如果窗口停靠返回true，否则返回false</returns>
+        private bool IsWindowDocked()
+        {
+            // 方法1：使用反射来检测窗口是否停靠（最准确的方法）
+            try
+            {
+                var dockedProperty = typeof(EditorWindow).GetProperty("docked", 
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                if (dockedProperty != null)
+                {
+                    bool isDocked = (bool)dockedProperty.GetValue(this);
+                    // Debug.Log($"反射检测窗口停靠状态: {isDocked}");
+                    return isDocked;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"反射检测窗口停靠状态失败: {ex.Message}");
+            }
+            
+            // 方法2：检查窗口是否最大化（最大化窗口通常也是停靠的）
+            try
+            {
+                var maximizedProperty = typeof(EditorWindow).GetProperty("maximized", 
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                if (maximizedProperty != null)
+                {
+                    bool isMaximized = (bool)maximizedProperty.GetValue(this);
+                    if (isMaximized)
+                    {
+                        // Debug.Log("窗口处于最大化状态，视为停靠状态");
+                        return true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"检测窗口最大化状态失败: {ex.Message}");
+            }
+            
+            // 方法3：通过窗口位置检测停靠状态（备用方法）
+            return IsWindowPositionDocked();
+        }
+        
+        /// 增强的窗口停靠状态检测 - 综合多种检测方法
+        /// <returns>如果窗口停靠返回true，否则返回false</returns>
+        private bool IsWindowDockedEnhanced()
+        {
+            // 方法1：反射检测（最准确）
+            var reflectionDocked = IsWindowDockedByReflection();
+            if (reflectionDocked) return true;
+            
+            // 方法2：最大化状态检测
+            var isWindowMaximized = IsWindowMaximized();
+            if (isWindowMaximized) return true;
+            
+            // 方法3：位置检测
+            var positionDocked = IsWindowPositionDocked();
+            if (positionDocked) return true;
+            
+            // 方法4：编辑器边界检测
+            var withinEditorBounds = IsWindowWithinEditorBounds();
+            if (withinEditorBounds) return true;
+            
+            // 方法5：窗口行为检测（检查窗口是否具有停靠窗口的典型行为）
+            var behaviorDocked = IsWindowBehaviorDocked();
+            return behaviorDocked;
+        }
+        
+        /// 使用反射检测窗口停靠状态
+        /// <returns>如果窗口停靠返回true</returns>
+        private bool IsWindowDockedByReflection()
+        {
+            try
+            {
+                var dockedProperty = typeof(EditorWindow).GetProperty("docked", 
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                if (dockedProperty != null)
+                {
+                    return (bool)dockedProperty.GetValue(this);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"反射检测窗口停靠状态失败: {ex.Message}");
+            }
+            return false;
+        }
+        
+        /// 检测窗口是否最大化
+        /// <returns>如果窗口最大化返回true</returns>
+        private bool IsWindowMaximized()
+        {
+            try
+            {
+                var maximizedProperty = typeof(EditorWindow).GetProperty("maximized", 
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                if (maximizedProperty != null)
+                {
+                    return (bool)maximizedProperty.GetValue(this);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"检测窗口最大化状态失败: {ex.Message}");
+            }
+            return false;
+        }
+        
+        /// 通过窗口行为检测停靠状态
+        /// <returns>如果窗口行为显示停靠状态返回true</returns>
+        private bool IsWindowBehaviorDocked()
+        {
+            // 检查窗口是否具有停靠窗口的典型行为特征
+            // 1. 窗口位置固定且靠近编辑器边界
+            // 2. 窗口尺寸与编辑器主窗口尺寸有特定关系
+            // 3. 窗口无法自由移动（在某些Unity版本中）
+            
+            try
+            {
+                // 获取编辑器主窗口位置
+                var mainWindowPosition = EditorGUIUtility.GetMainWindowPosition();
+                
+                // 检查窗口是否与编辑器主窗口对齐
+                var alignedWithMainWindow = 
+                    Mathf.Abs(position.x - mainWindowPosition.x) < 10f ||
+                    Mathf.Abs(position.y - mainWindowPosition.y) < 10f ||
+                    Mathf.Abs(position.x + position.width - (mainWindowPosition.x + mainWindowPosition.width)) < 10f ||
+                    Mathf.Abs(position.y + position.height - (mainWindowPosition.y + mainWindowPosition.height)) < 10f;
+                
+                // 检查窗口尺寸是否与编辑器主窗口有特定关系
+                var sizeRelation = 
+                    position.width >= mainWindowPosition.width * 0.8f ||
+                    position.height >= mainWindowPosition.height * 0.8f;
+                
+                // 如果窗口与编辑器主窗口对齐且尺寸有特定关系，可能处于停靠状态
+                return alignedWithMainWindow && sizeRelation;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"窗口行为检测失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// 通过窗口位置检测停靠状态（增强的备用方法）
+        /// <returns>如果窗口位置显示停靠状态返回true</returns>
+        private bool IsWindowPositionDocked()
+        {
+            // 检查窗口是否靠近屏幕边缘
+            const float edgeTolerance = 5f; // 减少边缘容差，提高检测精度
+            
+            var nearLeftEdge = position.x <= edgeTolerance;
+            var nearRightEdge = position.x >= Screen.currentResolution.width - position.width - edgeTolerance;
+            var nearTopEdge = position.y <= edgeTolerance;
+            var nearBottomEdge = position.y >= Screen.currentResolution.height - position.height - edgeTolerance;
+            
+            // 如果窗口靠近任何屏幕边缘，可能处于停靠状态
+            var isNearEdge = nearLeftEdge || nearRightEdge || nearTopEdge || nearBottomEdge;
+            
+            // 额外检查：如果窗口尺寸接近屏幕尺寸，可能处于停靠状态
+            var isFullWidth = position.width >= Screen.currentResolution.width - edgeTolerance * 2;
+            var isFullHeight = position.height >= Screen.currentResolution.height - edgeTolerance * 2;
+            
+            // 检查窗口是否在Unity编辑器主窗口内（非浮动窗口）
+            var isWithinEditorBounds = IsWindowWithinEditorBounds();
+            
+            // Debug.Log($"位置检测: 靠近边缘={isNearEdge}, 全宽={isFullWidth}, 全高={isFullHeight}, 编辑器内={isWithinEditorBounds}");
+            
+            return isNearEdge || isFullWidth || isFullHeight || isWithinEditorBounds;
+        }
+        
+        /// 检查窗口是否在Unity编辑器主窗口边界内
+        /// <returns>如果窗口在编辑器主窗口内返回true</returns>
+        private bool IsWindowWithinEditorBounds()
+        {
+            try
+            {
+                // 获取Unity编辑器主窗口位置
+                var mainWindowPosition = EditorGUIUtility.GetMainWindowPosition();
+                
+                // 检查当前窗口是否在编辑器主窗口内
+                var isWithinX = position.x >= mainWindowPosition.x && 
+                                position.x + position.width <= mainWindowPosition.x + mainWindowPosition.width;
+                var isWithinY = position.y >= mainWindowPosition.y && 
+                                position.y + position.height <= mainWindowPosition.y + mainWindowPosition.height;
+                
+                // 如果窗口完全在编辑器主窗口内，且不是浮动窗口，则可能是停靠状态
+                return isWithinX && isWithinY;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"检测编辑器主窗口边界失败: {ex.Message}");
+                return false;
+            }
+        }
+        
+        /// 强制应用窗口位置 - 最终的窗口位置恢复保障机制
+        /// 当所有其他恢复方法都失败时使用此方法（仅在停靠式窗口设置关闭时）
+        private void ForceApplyWindowPosition()
+        {
+            Debug.Log("使用强制窗口位置恢复方法");
+            
+            // 方法1：重新加载保存的窗口位置（仅在停靠式窗口设置关闭时）
+            if (!_disableDockedWindowAutoSize)
+            {
+                LoadWindowPositionAndDockState();
+            }
+            
+            // 方法2：延迟再次尝试应用位置
+            EditorApplication.delayCall += () =>
+            {
+                if (!this) return;
+                // 再次加载并应用窗口位置
+                LoadWindowPositionAndDockState();
+                    
+                // 强制重绘窗口
+                Repaint();
+                    
+                // 方法3：如果仍然失败，使用更直接的方法
+                EditorApplication.delayCall += () =>
+                {
+                    if (!this) return;
+                    // 检查窗口是否仍然不在正确位置
+                    var isCurrentlyDocked = IsWindowDockedEnhanced();
+                    if (isCurrentlyDocked) return;
+                    // 获取保存的位置
+                    var savedX = EditorPrefs.GetFloat("VicTools.WindowPosition.X", position.x);
+                    var savedY = EditorPrefs.GetFloat("VicTools.WindowPosition.Y", position.y);
+                    var savedWidth = EditorPrefs.GetFloat("VicTools.WindowPosition.Width", position.width);
+                    var savedHeight = EditorPrefs.GetFloat("VicTools.WindowPosition.Height", position.height);
+                                
+                    // 确保位置在屏幕范围内
+                    var clampedPosition = new Vector2(
+                        Mathf.Clamp(savedX, 0, Screen.currentResolution.width - savedWidth),
+                        Mathf.Clamp(savedY, 0, Screen.currentResolution.height - savedHeight)
+                    );
+                                
+                    // 确保尺寸在合理范围内
+                    var clampedSize = new Vector2(
+                        Mathf.Clamp(savedWidth, minSize.x, maxSize.x),
+                        Mathf.Clamp(savedHeight, minSize.y, maxSize.y)
+                    );
+                                
+                    // 直接设置窗口位置
+                    position = new Rect(clampedPosition, clampedSize);
+                                
+                    // 强制重绘
+                    Repaint();
+                                
+                    Debug.Log($"强制应用窗口位置: {clampedPosition}, 尺寸: {clampedSize}");
+                };
+            };
+        }
+
+        /// 创建纯色纹理 - VicToolsWindow 自己的实现
+        /// <param name="width">纹理宽度</param>
+        /// <param name="height">纹理高度</param>
+        /// <param name="color">纹理颜色</param>
+        /// <returns>创建的纹理</returns>
+        private Texture2D CreateColorTexture(int width, int height, Color color)
+        {
+            var texture = new Texture2D(width, height);
+            var pixels = new Color[width * height];
+            for (var i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = color;
+            }
+            texture.SetPixels(pixels);
+            texture.Apply();
+            // 正确设置HideFlags.HideAndDontSave，避免Unity编辑器试图持久化临时纹理
+            // 这解决了断言失败：'!(o->TestHideFlag(Object::kDontSaveInEditor) && (options & kAllowDontSaveObjectsToBePersistent) == 0)'
+            texture.hideFlags = HideFlags.HideAndDontSave;
+            return texture;
+        }
+
+    }
+
+#if TMP_PRESENT
+    // ═══════════════════════════════════════════
+    //  TMP 字体健康检查监听器
+    //  用途：监听 TMP 资源导入（含 Window > TextMeshPro > Import TMP Essential Resources），
+    //        导入完成且本窗口已打开时，弹窗询问是否修复空 material 字段。
+    // ═══════════════════════════════════════════
+
+    /// 监听 TMP 相关资产的导入/移动/删除，触发字体健康检查。
+    /// 内置 1 秒去抖避免批量导入时反复弹窗。
+    internal class TmpFontAssetWatcher : AssetPostprocessor
+    {
+        private const double CheckDebounceSeconds = 1.0;
+        private static double _lastCheckTime = 0;
+        private static bool _scheduled = false;
+
+        private static void OnPostprocessAllAssets(
+            string[] importedAssets,
+            string[] deletedAssets,
+            string[] movedAssets,
+            string[] movedFromAssetPaths)
+        {
+            if (_scheduled) return;
+            if (importedAssets == null || importedAssets.Length == 0) return;
+
+            bool hasTmpChange = false;
+            for (int i = 0; i < importedAssets.Length; i++)
+            {
+                var path = importedAssets[i];
+                if (string.IsNullOrEmpty(path)) continue;
+                if (path.IndexOf("TextMesh Pro", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    path.IndexOf("TMP_", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    hasTmpChange = true;
+                    break;
+                }
+            }
+            if (!hasTmpChange) return;
+
+            double now = EditorApplication.timeSinceStartup;
+            if (now - _lastCheckTime < CheckDebounceSeconds) return;
+            _lastCheckTime = now;
+            _scheduled = true;
+
+            EditorApplication.delayCall += () =>
+            {
+                _scheduled = false;
+                // 用户已永久关闭则跳过
+                if (EditorPrefs.GetBool("VicTools.TmpFontCheck.disabled", false)) return;
+
+                // 反射调用 VicToolsWindow 的私有静态检查方法
+                // 之所以走反射：避免在 TMP 未安装时把方法签名暴露成 public，保持 API 干净
+                var method = typeof(VicToolsWindow).GetMethod(
+                    "CheckTmpFontHealthAndNotify",
+                    System.Reflection.BindingFlags.Static |
+                    System.Reflection.BindingFlags.NonPublic);
+                method?.Invoke(null, null);
+            };
+        }
+    }
+#endif
+
+    // ═══════════════════════════════════════════
+    //  AdvancedDropdown 通用实现（支持图标）
+    // ═══════════════════════════════════════════
+
+    /// 下拉菜单项数据
+    internal class VicDropdownItemData
+    {
+        public string name;
+        public Texture2D icon;
+        public Action action;
+        public bool isSeparator;
+
+        public VicDropdownItemData(string name, Texture2D icon, Action action)
+        {
+            this.name = name;
+            this.icon = icon;
+            this.action = action;
+            this.isSeparator = false;
+        }
+
+        public static VicDropdownItemData Separator()
+        {
+            return new VicDropdownItemData("", null, null) { isSeparator = true };
+        }
+    }
+
+    /// 通用 AdvancedDropdown，接收菜单项列表并在选中时执行对应回调
+    internal class VicToolsDropdown : AdvancedDropdown
+    {
+        private readonly string _title;
+        private readonly List<VicDropdownItemData> _items;
+        private readonly List<VicDropdownItemData> _actionableItems;
+
+        public VicToolsDropdown(AdvancedDropdownState state, string title, List<VicDropdownItemData> items)
+            : base(state)
+        {
+            _title = title;
+            _items = items;
+            _actionableItems = new List<VicDropdownItemData>();
+            minimumSize = new Vector2(200, 0);
+        }
+
+        protected override AdvancedDropdownItem BuildRoot()
+        {
+            var root = new AdvancedDropdownItem(_title);
+            _actionableItems.Clear();
+
+            foreach (var data in _items)
+            {
+                if (data.isSeparator)
+                {
+                    root.AddSeparator();
+                }
+                else
+                {
+                    var item = new AdvancedDropdownItem(data.name);
+                    if (data.icon != null)
+                        item.icon = data.icon;
+                    root.AddChild(item);
+                    _actionableItems.Add(data);
+                }
+            }
+
+            return root;
+        }
+
+        protected override void ItemSelected(AdvancedDropdownItem item)
+        {
+            // 通过名称匹配找到对应数据项执行回调
+            foreach (var data in _actionableItems)
+            {
+                if (data.name == item.name)
+                {
+                    data.action?.Invoke();
+                    return;
+                }
+            }
+        }
+    }
+}

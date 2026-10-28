@@ -1,0 +1,1149 @@
+﻿// Glass_carWindow.shader GUI控制脚本
+// 基于PBR_MobileGUI的控制逻辑实现
+// Glass_carWindowGUIv1.1 修复Glass_MobileNew.shader的读档排序错误问题
+// Glass_carWindowGUIv2.0 添加预设列表菜单，读档使用下拉菜单模式
+// Glass_carWindowGUIv2.1 添加风动方向参数存档、读档记录
+
+using UnityEngine;
+using UnityEditor;
+using VicTools;
+
+public class Glass_carWindowGUI : ShaderGUI
+{
+    private MaterialEditor m_MaterialEditor;
+    private MaterialProperty[] m_Properties;
+
+    // 缓存属性
+    private MaterialProperty baseColor;
+    private MaterialProperty baseMap; // Glass_MobileNew 主纹理
+    private MaterialProperty transparency;
+    private MaterialProperty smoothness;
+    private MaterialProperty specularStrength;
+    private MaterialProperty sceneBlurStrength; // Glass_MobileNew独有
+    private MaterialProperty useNormalMap;
+    private MaterialProperty bumpMap;
+    private MaterialProperty bumpScale;
+    private MaterialProperty useVertexDeform;       // Glass_MobileNew 顶点变形
+    private MaterialProperty vertexDeformStrength;  // Glass_MobileNew 顶点变形强度
+    private MaterialProperty useRefraction; // Glass_MobileNew独有
+    private MaterialProperty refractionStrength; // Glass_MobileNew独有
+    private MaterialProperty useReflection;
+    private MaterialProperty sphericalReflectionMap;
+    private MaterialProperty reflectionScale;
+    private MaterialProperty reflectionOffset; // Glass_carWindow独有
+    private MaterialProperty reflectionBlur;
+    private MaterialProperty fresnelPower;
+    private MaterialProperty fresnelBias;
+    private MaterialProperty fresnelScale;
+    private MaterialProperty baseLightStrength; // Glass_MobileNew 基础光照强度
+    private MaterialProperty useFresnelRamp; // Glass_carWindow独有
+    private MaterialProperty fresnelRampTexture; // Glass_carWindow独有
+    private MaterialProperty fresnelRampRow; // Glass_carWindow独有
+    private MaterialProperty fresnelRampIntensity; // Glass_carWindow独有
+    // 自发光（emission，参考 PBR_Mobile_NEW.shader 命名）— Glass_MobileNew 独有
+    private MaterialProperty useEmissionMap;
+    private MaterialProperty emissionColor;
+    private MaterialProperty emissionMap;
+    private MaterialProperty emissionScale;
+    // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+    private MaterialProperty useVertexDisplacement;
+    private MaterialProperty treeNoiseTexture1;
+    private MaterialProperty windDirection;
+    private MaterialProperty bigWindAmount;
+    private MaterialProperty smallWindSpeed;
+    private MaterialProperty smallWave;
+    private MaterialProperty cullMode;
+    private MaterialProperty renderMode; // Glass_MobileNew 渲染模式
+    private MaterialProperty zWrite; // 深度写入
+
+    public override void OnGUI(MaterialEditor materialEditor, MaterialProperty[] properties)
+    {
+        m_MaterialEditor = materialEditor;
+        m_Properties = properties;
+
+        // 查找所有属性
+        FindProperties();
+
+        // 绘制 GUI
+        DrawGlobalSettings();
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+        DrawGlassProperties();
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+        DrawSpecular();
+        }
+        // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+        if (useVertexDisplacement != null)
+        {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+                DrawVertexDisplacement();
+            }
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+        DrawDistortion();
+        }
+        // Glass_MobileNew独有：折射（Glass_carWindow 无此属性，跳过防止空盒）
+        if (useRefraction != null)
+        {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+                DrawRefraction();
+            }
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+        DrawReflection();
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+        DrawFresnel();
+        }
+        // 自发光（Glass_MobileNew 独有，参考 PBR_Mobile_NEW.shader 的 emission 字段）
+        if (useEmissionMap != null)
+        {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+                DrawEmission();
+            }
+        }
+        // Glass_carWindow独有：菲涅尔渐变贴图（Glass_MobileNew 无此属性，跳过防止空盒）
+        if (useFresnelRamp != null)
+        {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+                DrawFresnelRamp();
+            }
+        }
+        DrawRenderSettings();
+    }
+
+    private void FindProperties()
+    {
+        baseColor = FindProperty("_BaseColor", m_Properties);
+        baseMap = FindProperty("_BaseMap", m_Properties, false); // Glass_MobileNew独有
+        transparency = FindProperty("_Transparency", m_Properties);
+        smoothness = FindProperty("_Smoothness", m_Properties);
+        specularStrength = FindProperty("_SpecularStrength", m_Properties);
+        sceneBlurStrength = FindProperty("_SceneBlurStrength", m_Properties, false); // Glass_MobileNew独有
+        useNormalMap = FindProperty("_UseNormalMap", m_Properties, false);
+        bumpMap = FindProperty("_BumpMap", m_Properties);
+        bumpScale = FindProperty("_BumpScale", m_Properties);
+        useVertexDeform = FindProperty("_UseVertexDeform", m_Properties, false);
+        vertexDeformStrength = FindProperty("_VertexDeformStrength", m_Properties, false);
+        useRefraction = FindProperty("_UseRefraction", m_Properties, false); // Glass_MobileNew独有
+        refractionStrength = FindProperty("_RefractionStrength", m_Properties, false); // Glass_MobileNew独有
+        useReflection = FindProperty("_UseReflection", m_Properties, false);
+        sphericalReflectionMap = FindProperty("_SphericalReflectionMap", m_Properties);
+        reflectionScale = FindProperty("_ReflectionScale", m_Properties);
+        reflectionOffset = FindProperty("_ReflectionOffset", m_Properties, false); // Glass_carWindow独有
+        reflectionBlur = FindProperty("_ReflectionBlur", m_Properties);
+        fresnelPower = FindProperty("_FresnelPower", m_Properties);
+        fresnelBias = FindProperty("_FresnelBias", m_Properties);
+        fresnelScale = FindProperty("_FresnelScale", m_Properties);
+        baseLightStrength = FindProperty("_BaseLightStrength", m_Properties, false); // Glass_MobileNew独有
+        useFresnelRamp = FindProperty("_UseFresnelRamp", m_Properties, false); // Glass_carWindow独有
+        fresnelRampTexture = FindProperty("_FresnelRampTexture", m_Properties, false); // Glass_carWindow独有
+        fresnelRampRow = FindProperty("_FresnelRampRow", m_Properties, false); // Glass_carWindow独有
+        fresnelRampIntensity = FindProperty("_FresnelRampIntensity", m_Properties, false); // Glass_carWindow独有
+        // 自发光（Glass_MobileNew 独有）
+        useEmissionMap = FindProperty("_UseEmissionMap", m_Properties, false);
+        emissionColor   = FindProperty("_EmissionColor",   m_Properties, false);
+        emissionMap     = FindProperty("_EmissionMap",     m_Properties, false);
+        emissionScale   = FindProperty("_EmissionScale",   m_Properties, false);
+        // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+        useVertexDisplacement = FindProperty("_UseVertexDisplacement", m_Properties, false);
+        treeNoiseTexture1 = FindProperty("_Tree_NoiseTexture1", m_Properties, false);
+        windDirection = FindProperty("_WindDirection", m_Properties, false);
+        bigWindAmount = FindProperty("_Big_WindAmount", m_Properties, false);
+        smallWindSpeed = FindProperty("_Small_WindSpeed", m_Properties, false);
+        smallWave = FindProperty("_Small_Wave", m_Properties, false);
+        cullMode = FindProperty("_Cull", m_Properties);
+        renderMode = FindProperty("_RenderMode", m_Properties, false);
+        zWrite = FindProperty("_ZWrite", m_Properties, false);
+    }
+
+    private void DrawGlobalSettings()
+    {
+        EditorGUILayout.BeginHorizontal();
+        GUILayout.Label(HeaderStyle.Rich("全局设置", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle);
+        
+        // 添加存档按钮
+        GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f); // 蓝色背景
+        if (GUILayout.Button("存档", GUILayout.Width(50)))
+        {
+            EditorApplication.delayCall += SaveMaterialParameters;
+        }
+        
+        // 添加读档按钮
+        GUI.backgroundColor = new Color(0.5f, 1.0f, 0.5f); // 绿色背景
+        if (GUILayout.Button("读档 ▾", GUILayout.Width(55)))
+        {
+            ShowLoadDropdown();
+        }
+
+        // 添加重置按钮
+        GUI.backgroundColor = new Color(1.0f, 0.8f, 0.3f); // 黄色背景
+        if (GUILayout.Button("重置参数", GUILayout.Width(60)))
+        {
+            EditorApplication.delayCall += ResetMaterialParameters;
+        }
+        
+        // 预设下拉菜单
+        GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f); // 紫色背景
+        if (GUILayout.Button("预设 ▾", GUILayout.Width(55)))
+        {
+            ShowPresetDropdown();
+        }
+        GUI.backgroundColor = Color.white;
+        EditorGUILayout.EndHorizontal();
+    }
+
+/// 显示读档下拉菜单
+    private void ShowLoadDropdown()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = "Library/VicTools/Glass/" + shaderName;
+        
+        if (!System.IO.Directory.Exists(folderPath))
+        {
+            System.IO.Directory.CreateDirectory(folderPath);
+        }
+        
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        
+        GenericMenu menu = new GenericMenu();
+        
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无预设存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file; // 捕获到局部变量供lambda使用
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(filePath);
+                });
+            }
+        }
+        
+        menu.ShowAsContext();
+    }
+    /// 显示预设下拉菜单
+    private void ShowPresetDropdown()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = "Packages/com.youdoo.victools/Runtime/Shaders~/" + shaderName;
+        // v3.4 迁移：旧 Runtime/Shaders/<shaderName>/ → Runtime/Shaders~/<shaderName>/（AssetDatabase.MoveAsset 同步 .meta 保 GUID）
+        string oldFolderPath = "Packages/com.youdoo.victools/Runtime/Shaders/" + shaderName;
+        if (System.IO.Directory.Exists(oldFolderPath) && !System.IO.Directory.Exists(folderPath))
+            AssetDatabase.MoveAsset(oldFolderPath, folderPath);
+        
+        if (!System.IO.Directory.Exists(folderPath))
+        {
+            System.IO.Directory.CreateDirectory(folderPath);
+        }
+        
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        
+        GenericMenu menu = new GenericMenu();
+        
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无预设存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file; // 捕获到局部变量供lambda使用
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(filePath);
+                });
+            }
+        }
+        
+        menu.ShowAsContext();
+    }
+
+    /// 从预设文件加载（带纹理提示）
+    private void LoadPresetFile(string filePath)
+    {
+        if (!System.IO.File.Exists(filePath)) return;
+        LoadMaterialParametersFromFile(filePath);
+    }
+
+    private void DrawGlassProperties()
+    {
+        GUILayout.Label(HeaderStyle.Rich("1 ▌玻璃属性 (Glass Properties)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
+        m_MaterialEditor.ColorProperty(baseColor, "基础颜色");
+        if (baseMap != null)
+        {
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("主纹理"), baseMap);
+        }
+        m_MaterialEditor.RangeProperty(transparency, "全局透明度");
+    }
+
+    private void DrawSpecular()
+    {
+        GUILayout.Label(HeaderStyle.Rich("2 ▌高光 (Specular)", HeaderStyle.Lighting), EditorStyle.Get.BoldLabelRichStyle);
+        m_MaterialEditor.RangeProperty(smoothness, "光滑度");
+        m_MaterialEditor.RangeProperty(specularStrength, "高光强度");
+        
+        // Glass_MobileNew独有参数
+        if (sceneBlurStrength != null)
+        {
+            m_MaterialEditor.RangeProperty(sceneBlurStrength, "场景模糊强度");
+            EditorGUILayout.Space(4);
+        // Glass_MobileNew 基础光照
+            m_MaterialEditor.RangeProperty(baseLightStrength, "基础光照强度");
+            var shadowStrength = FindProperty("_ShadowStrength", m_Properties, false);
+            if (shadowStrength != null)
+                m_MaterialEditor.RangeProperty(shadowStrength, "阴影强度");
+        }
+    }
+
+    private void DrawVertexDisplacement()
+    {
+        // 顶点风动位移（移植自 SyntyStudios/SciFiPlant 的 Tree Vertex Animation）
+        if (useVertexDisplacement == null) return;
+
+        // 显式监听 toggle 变化，强制同步 keyword（防止 [Toggle] 自动处理在某些 Editor 场景下失效）
+        EditorGUI.BeginChangeCheck();
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useVertexDisplacement, "3 ▌顶点风动位移 (Wind Displacement)", HeaderStyle.Interaction);
+        if (EditorGUI.EndChangeCheck())
+        {
+            foreach (var obj in m_MaterialEditor.targets)
+            {
+                Material mat = obj as Material;
+                if (mat == null) continue;
+                if (useVertexDisplacement.floatValue > 0.5f)
+                    mat.EnableKeyword("_USEVERTEXDISPLACEMENT");
+                else
+                    mat.DisableKeyword("_USEVERTEXDISPLACEMENT");
+            }
+        }
+
+        if (useVertexDisplacement.floatValue > 0.5f)
+        {
+            EditorGUI.indentLevel++;
+
+            EditorGUILayout.HelpBox(
+                "沿模型 X 轴位移，振幅 / 时间速度 / 空间频率 三参数独立。\n" +
+                "噪声贴图可空，为空时自动使用程序化噪声。",
+                MessageType.Info);
+
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("风动噪声贴图 (R, 可选)"), treeNoiseTexture1);
+            if (windDirection != null)
+                m_MaterialEditor.VectorProperty(windDirection, "风动方向 (XYZ)");
+            if (bigWindAmount != null)
+                m_MaterialEditor.FloatProperty(bigWindAmount, "风动振幅 (Big Wind Amount)");
+            if (smallWindSpeed != null)
+                m_MaterialEditor.FloatProperty(smallWindSpeed, "时间速度 (Small Wind Speed)");
+            if (smallWave != null)
+                m_MaterialEditor.RangeProperty(smallWave, "空间频率 (Small Wave)");
+
+            EditorGUI.indentLevel--;
+        }
+    }
+
+    private void DrawDistortion()
+    {
+        // 章节编号：插入顶点风动位移后，原 3 → 4
+        string sectionNumber = "4";
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useNormalMap, $"{sectionNumber} ▌使用法线贴图 (扭曲)", HeaderStyle.Interaction);
+        if (useNormalMap.floatValue > 0.5f)
+        {
+            EditorGUI.indentLevel++;
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), bumpMap);
+            
+            // 显示法线贴图的Tiling和Offset参数
+            if (bumpMap.textureValue != null)
+            {
+                EditorGUI.indentLevel++;
+                
+                // 获取材质
+                Material material = m_MaterialEditor.target as Material;
+                if (material != null)
+                {
+                    // 获取当前的Tiling和Offset
+                    Vector2 tiling = material.GetTextureScale("_BumpMap");
+                    Vector2 offset = material.GetTextureOffset("_BumpMap");
+                    
+                    EditorGUI.BeginChangeCheck();
+                    
+                    // 显示Tiling
+                    tiling = EditorGUILayout.Vector2Field("Tiling", tiling);
+                    
+                    // 显示Offset
+                    offset = EditorGUILayout.Vector2Field("Offset", offset);
+                    
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        // 记录Undo
+                        Undo.RecordObject(material, "Change Normal Map Tiling/Offset");
+                        
+                        // 应用修改
+                        material.SetTextureScale("_BumpMap", tiling);
+                        material.SetTextureOffset("_BumpMap", offset);
+                        
+                        EditorUtility.SetDirty(material);
+                    }
+                }
+                
+                EditorGUI.indentLevel--;
+            }
+            
+            m_MaterialEditor.RangeProperty(bumpScale, "法线强度");
+            
+            // 顶点变形（Glass_MobileNew 独有）
+            if (useVertexDeform != null && vertexDeformStrength != null)
+            {
+                EditorGUILayout.Space(4);
+                m_MaterialEditor.ShaderProperty(useVertexDeform, "顶点变形");
+                if (useVertexDeform.floatValue > 0.5f)
+                {
+                    EditorGUI.indentLevel++;
+                    m_MaterialEditor.RangeProperty(vertexDeformStrength, "变形强度");
+                    
+                    // UV 采样模式开关
+                    var deformUseUV = FindProperty("_DeformUseUV", m_Properties, false);
+                    if (deformUseUV != null)
+                    {
+                        m_MaterialEditor.ShaderProperty(deformUseUV, new GUIContent("UV 采样模式（蒙皮）",
+                            "勾选后使用模型 UV 坐标采样法线贴图做顶点变形。\n" +
+                            "蒙皮模型动画时顶点位移固定不跳动。\n" +
+                            "此模式下 Offset 作为固定 UV 偏移，不做时间滚动。\n\n" +
+                            "不勾选则使用世界坐标采样（适合静态模型，无 UV 接缝）。"));
+                    }
+                    
+                    // 根据 UV 模式显示不同的提示
+                    if (deformUseUV != null && deformUseUV.floatValue > 0.5f)
+                    {
+                        EditorGUILayout.HelpBox("UV 模式：Offset XY 作为固定 UV 偏移（不做时间滚动）\n适用于蒙皮模型，顶点变形固定不抖动", MessageType.Info);
+                    }
+                    else
+                    {
+                        EditorGUILayout.HelpBox("世界坐标模式：Offset XY 同时作为 UV 游走速度\nOffset = (0,0) 时静止，不为零时按该速度滚动", MessageType.Info);
+                    }
+                    EditorGUI.indentLevel--;
+                }
+            }
+            
+            EditorGUI.indentLevel--;
+        }
+    }
+
+    private void DrawRefraction()
+    {
+        // Glass_MobileNew独有的折射功能
+        if (useRefraction != null && refractionStrength != null)
+        {
+            // 章节编号：插入顶点风动位移后，原 4 → 5
+            HeaderStyle.ShaderProperty(m_MaterialEditor, useRefraction, "5 ▌使用折射", HeaderStyle.Base);
+
+            if (useRefraction.floatValue > 0.5f)
+            {
+                EditorGUI.indentLevel++;
+                m_MaterialEditor.RangeProperty(refractionStrength, "折射强度");
+                EditorGUI.indentLevel--;
+            }
+        }
+    }
+
+    private void DrawReflection()
+    {
+        // 根据是否有折射功能来决定标题编号
+        // 插入顶点风动位移后，原 4/5 → 5/6
+        string sectionNumber = (useRefraction != null) ? "6" : "5";
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useReflection, $"{sectionNumber} ▌使用反射贴图", HeaderStyle.Base);
+        
+        if (useReflection.floatValue > 0.5f)
+        {
+            EditorGUI.indentLevel++;
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("球形反射贴图"), sphericalReflectionMap);
+            m_MaterialEditor.RangeProperty(reflectionScale, "反射强度");
+            
+            // Glass_carWindow独有参数
+            if (reflectionOffset != null)
+            {
+                m_MaterialEditor.RangeProperty(reflectionOffset, "反射偏移");
+            }
+            
+            m_MaterialEditor.RangeProperty(reflectionBlur, "最大反射模糊");
+            EditorGUI.indentLevel--;
+        }
+    }
+
+    private void DrawFresnel()
+    {
+        // 根据是否有折射功能来决定标题编号
+        // 插入顶点风动位移后，原 5/6 → 6/7
+        string sectionNumber = (useRefraction != null) ? "7" : "6";
+        GUILayout.Label(HeaderStyle.Rich($"{sectionNumber} ▌菲涅尔 (Fresnel)", HeaderStyle.Fresnel), EditorStyle.Get.BoldLabelRichStyle);
+        m_MaterialEditor.RangeProperty(fresnelPower, "全局强度");
+        m_MaterialEditor.RangeProperty(fresnelBias, "中心偏移");
+        m_MaterialEditor.RangeProperty(fresnelScale, "边缘缩放");
+
+    }
+
+    // 自发光（Glass_MobileNew 独有；参考 PBR_Mobile_NEW.shader 命名：_UseEmissionMap/_EmissionColor/_EmissionMap/_EmissionScale）
+    private void DrawEmission()
+    {
+        // 章节编号：插入自发光后，原 6/7 → 7/8
+        string sectionNumber = (useRefraction != null) ? "8" : "7";
+
+        // 显式监听 toggle：强制同步 keyword（防止 [Toggle] 自动处理在某些 Editor 场景下失效）
+        EditorGUI.BeginChangeCheck();
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useEmissionMap, $"{sectionNumber} ▌使用自发光贴图 (Emission)", HeaderStyle.Lighting);
+        if (EditorGUI.EndChangeCheck())
+        {
+            foreach (var obj in m_MaterialEditor.targets)
+            {
+                Material mat = obj as Material;
+                if (mat == null) continue;
+                if (useEmissionMap.floatValue > 0.5f)
+                    mat.EnableKeyword("_USEEMISSIONMAP");
+                else
+                    mat.DisableKeyword("_USEEMISSIONMAP");
+            }
+        }
+
+        if (useEmissionMap.floatValue > 0.5f)
+        {
+            EditorGUI.indentLevel++;
+            EditorGUILayout.HelpBox(
+                "算法：emissionMap.rgb × _EmissionColor.rgb × _EmissionScale，加到 finalColor。\n" +
+                "_EmissionColor 是 [HDR] 颜色，>1.0 数值可触发 Bloom 后处理。",
+                MessageType.Info);
+
+            if (emissionMap != null)
+                m_MaterialEditor.TexturePropertySingleLine(new GUIContent("自发光贴图 (RGB)"), emissionMap);
+            if (emissionColor != null) m_MaterialEditor.ColorProperty(emissionColor, "自发光颜色 (HDR)");
+            if (emissionScale != null) m_MaterialEditor.RangeProperty(emissionScale, "自发光强度");
+
+            EditorGUI.indentLevel--;
+        }
+    }
+
+    private void DrawFresnelRamp()
+    {
+        // Glass_carWindow独有的菲涅尔渐变贴图功能
+        if (useFresnelRamp != null && fresnelRampTexture != null &&
+            fresnelRampRow != null && fresnelRampIntensity != null)
+        {
+            // 根据是否有折射功能来决定标题编号
+            // 插入自发光后，原 7/8 → 8/9
+            string sectionNumber = (useRefraction != null) ? "9" : "8";
+            HeaderStyle.ShaderProperty(m_MaterialEditor, useFresnelRamp, $"{sectionNumber} ▌使用菲涅尔渐变贴图", HeaderStyle.Fresnel);
+            
+            if (useFresnelRamp.floatValue > 0.5f)
+            {
+                EditorGUI.indentLevel++;
+                
+                // 添加说明文字
+                EditorGUILayout.HelpBox("• 横向(X轴)：从左到右对应菲涅尔从内到外（使用固定Fresnel计算）\n• 纵向(Y轴)：不同行代表不同的渐变效果\n• 渐变行选择值：0.01=底部，0.99=顶部\n• 固定Fresnel：不受菲涅尔参数影响，确保0-1完整范围", MessageType.Info);
+                
+                m_MaterialEditor.TexturePropertySingleLine(new GUIContent("菲涅尔渐变贴图"), fresnelRampTexture);
+                m_MaterialEditor.RangeProperty(fresnelRampRow, "渐变行选择");
+                m_MaterialEditor.RangeProperty(fresnelRampIntensity, "渐变强度");
+                EditorGUI.indentLevel--;
+            }
+        }
+    }
+
+    private void DrawRenderSettings()
+    {
+        // 章节编号：插入自发光后，原 8 → 9 (有折射时 10)
+        string sectionNumber = (useRefraction != null) ? "10" : "9";
+        GUILayout.Label(HeaderStyle.Rich($"{sectionNumber} ▌渲染设置 (Render Settings)", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
+        
+        // Glass_MobileNew 渲染模式切换
+        if (renderMode != null)
+        {
+            EditorGUI.BeginChangeCheck();
+            m_MaterialEditor.ShaderProperty(renderMode, "渲染模式");
+            if (EditorGUI.EndChangeCheck())
+            {
+                foreach (var obj in m_MaterialEditor.targets)
+                {
+                    Material mat = obj as Material;
+                    if (mat == null) continue;
+                    ApplyRenderMode(mat);
+                }
+            }
+        }
+        
+        m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
+        
+        // 深度写入选项
+        if (zWrite != null)
+        {
+            EditorGUI.BeginChangeCheck();
+            bool zWriteOn = EditorGUILayout.Toggle("深度写入 (ZWrite)", zWrite.floatValue > 0.5f);
+            if (EditorGUI.EndChangeCheck())
+            {
+                zWrite.floatValue = zWriteOn ? 1f : 0f;
+            }
+        }
+        
+        m_MaterialEditor.RenderQueueField();
+        m_MaterialEditor.EnableInstancingField();
+        m_MaterialEditor.DoubleSidedGIField();
+    }
+
+    /// 根据 _RenderMode 设置混合模式、ZWrite、RenderQueue 和 Keywords
+    private static void ApplyRenderMode(Material material)
+    {
+        if (!material.HasProperty("_RenderMode")) return;
+        
+        float mode = material.GetFloat("_RenderMode");
+        
+        if (mode > 0.5f) // Opaque
+        {
+            material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.One);
+            material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.Zero);
+            material.SetFloat("_ZWrite", 1);
+            material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry;
+            material.SetOverrideTag("RenderType", "Opaque");
+            material.EnableKeyword("_RENDERMODE_OPAQUE");
+            material.DisableKeyword("_RENDERMODE_TRANSPARENT");
+            
+            // Opaque 模式下自动关闭折射（折射依赖透明采样场景颜色）
+            if (material.HasProperty("_UseRefraction"))
+            {
+                material.SetFloat("_UseRefraction", 0);
+                material.DisableKeyword("_USEREFRACTION");
+            }
+        }
+        else // Transparent
+        {
+            material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.One);
+            material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            // material.SetFloat("_ZWrite", 0);
+            material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent + 10;
+            material.SetOverrideTag("RenderType", "Transparent");
+            material.EnableKeyword("_RENDERMODE_TRANSPARENT");
+            material.DisableKeyword("_RENDERMODE_OPAQUE");
+        }
+    }
+
+    /// 获取材质参数存档路径（Library中，用户存读档）
+    private string GetPresetPath(string presetName)
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return null;
+        
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = "Library/VicTools/Glass/" + shaderName;
+        
+        if (!System.IO.Directory.Exists(folderPath))
+        {
+            System.IO.Directory.CreateDirectory(folderPath);
+        }
+        
+        return folderPath + "/" + presetName + ".json";
+    }
+    
+    /// 存档材质参数（排除纹理）
+    private void SaveMaterialParameters()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        string shaderName = material.shader.name.Replace("/", "_");
+        string defaultPath = "Library/VicTools/Glass/" + shaderName;
+        
+        // 确保目录存在
+        if (!System.IO.Directory.Exists(defaultPath))
+        {
+            System.IO.Directory.CreateDirectory(defaultPath);
+        }
+        
+        // 弹出输入框让用户输入存档名称
+        string presetName = EditorUtility.SaveFilePanel(
+            "保存玻璃材质参数存档",
+            defaultPath,
+            "GlassPreset",
+            "json"
+        );
+        
+        if (string.IsNullOrEmpty(presetName)) return;
+        
+        // 提取文件名（不含扩展名）
+        string fileName = System.IO.Path.GetFileNameWithoutExtension(presetName);
+        
+        SaveMaterialParametersToFile(fileName);
+    }
+    
+    /// 保存材质参数到指定文件
+    private void SaveMaterialParametersToFile(string presetName)
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        // 从 MaterialProperty 列表构建类型对照表，修正 ShaderUtil 对 Vector 类型的误判
+        var propTypeMap = new System.Collections.Generic.Dictionary<string, MaterialProperty.PropType>();
+        if (m_Properties != null)
+        {
+            foreach (var mp in m_Properties)
+            {
+                if (mp != null)
+                    propTypeMap[mp.name] = mp.type;
+            }
+        }
+        
+        Shader shader = material.shader;
+        int propertyCount = ShaderUtil.GetPropertyCount(shader);
+        
+        // 手动构建JSON
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.AppendLine("{");
+        bool first = true;
+        
+        for (int i = 0; i < propertyCount; i++)
+        {
+            string propertyName = ShaderUtil.GetPropertyName(shader, i);
+            ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
+            
+            if (!material.HasProperty(propertyName)) continue;
+            
+            // 优先用 MaterialProperty.type 修正类型（某些 Unity 版本 Vector → Float 误判）
+            MaterialProperty.PropType mpropType;
+            if (propTypeMap.TryGetValue(propertyName, out mpropType)
+                && mpropType == MaterialProperty.PropType.Vector)
+            {
+                propertyType = ShaderUtil.ShaderPropertyType.Vector;
+            }
+            
+            if (!first) sb.AppendLine(",");
+            first = false;
+            
+            sb.Append("  \"" + propertyName + "\": ");
+            
+            switch (propertyType)
+            {
+                case ShaderUtil.ShaderPropertyType.Color:
+                    Color color = material.GetColor(propertyName);
+                    sb.Append($"[{color.r}, {color.g}, {color.b}, {color.a}]");
+                    break;
+                    
+                case ShaderUtil.ShaderPropertyType.Vector:
+                    Vector4 vector = material.GetVector(propertyName);
+                    sb.Append($"[{vector.x}, {vector.y}, {vector.z}, {vector.w}]");
+                    break;
+                    
+                case ShaderUtil.ShaderPropertyType.Float:
+                case ShaderUtil.ShaderPropertyType.Range:
+                    sb.Append(material.GetFloat(propertyName).ToString());
+                    break;
+                    
+                case ShaderUtil.ShaderPropertyType.TexEnv:
+                    Texture tex = material.GetTexture(propertyName);
+                    string texPath = "";
+                    if (tex != null)
+                    {
+                        texPath = AssetDatabase.GetAssetPath(tex);
+                    }
+                    Vector2 tiling = material.GetTextureScale(propertyName);
+                    Vector2 offset = material.GetTextureOffset(propertyName);
+                    sb.Append("{");
+                    sb.Append($"\"path\": \"{EscapeJsonString(texPath)}\", ");
+                    sb.Append($"\"tiling\": [{tiling.x}, {tiling.y}], ");
+                    sb.Append($"\"offset\": [{offset.x}, {offset.y}]");
+                    sb.Append("}");
+                    break;
+            }
+        }
+        
+        sb.AppendLine();
+        sb.AppendLine("}");
+        
+        // 保存到文件
+        string path = GetPresetPath(presetName);
+        System.IO.File.WriteAllText(path, sb.ToString());
+        
+        Debug.Log($"玻璃材质参数已保存到: {path}（含纹理引用）");
+    }
+    
+    /// JSON字符串转义（处理路径中的反斜杠）
+    private static string EscapeJsonString(string str)
+    {
+        if (string.IsNullOrEmpty(str)) return "";
+        return str.Replace("\\", "/");
+    }
+    
+    /// 读档材质参数
+    private void LoadMaterialParameters()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        string shaderName = material.shader.name.Replace("/", "_");
+        string defaultPath = "Library/VicTools/Glass/" + shaderName;
+        
+        // 确保目录存在
+        if (!System.IO.Directory.Exists(defaultPath))
+        {
+            System.IO.Directory.CreateDirectory(defaultPath);
+        }
+        
+        // 弹出文件选择框
+        string presetPath = EditorUtility.OpenFilePanel(
+            "加载玻璃材质参数存档",
+            defaultPath,
+            "json"
+        );
+        
+        if (string.IsNullOrEmpty(presetPath)) return;
+        
+        LoadMaterialParametersFromFile(presetPath);
+    }
+    
+    /// 从文件加载材质参数
+    private void LoadMaterialParametersFromFile(string filePath, bool isReset = false)
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        if (!System.IO.File.Exists(filePath))
+        {
+            Debug.LogWarning($"存档文件不存在: {filePath}");
+            return;
+        }
+        
+        // 读取JSON
+        string json = System.IO.File.ReadAllText(filePath);
+        
+        // 检测存档中是否包含纹理数据
+        bool hasTextureData = json.Contains("\"path\":");
+        bool loadTextures = false;
+        
+        if (hasTextureData && !isReset)
+        {
+            loadTextures = EditorUtility.DisplayDialog("读取纹理",
+                "存档中包含纹理贴图引用，是否同时读取纹理？\n\n选择「是」将还原纹理贴图及Tiling/Offset\n选择「否」仅读取数值参数",
+                "是，读取纹理", "否，仅参数");
+        }
+        
+        // 记录撤销操作
+        Undo.RecordObject(material, "Load Glass Material Parameters");
+
+        // 构建 MaterialProperty 类型对照表，用于区分配 Color/Vector
+        var propTypeMap = new System.Collections.Generic.Dictionary<string, MaterialProperty.PropType>();
+        if (m_Properties != null)
+        {
+            foreach (var mp in m_Properties)
+            {
+                if (mp != null)
+                    propTypeMap[mp.name] = mp.type;
+            }
+        }
+
+        // 手动解析JSON
+        var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
+
+        // 收集缺失纹理的警告信息
+        System.Collections.Generic.List<string> missingTextures = new System.Collections.Generic.List<string>();
+        
+        for (int lineIdx = 0; lineIdx < lines.Length; lineIdx++)
+        {
+            string line = lines[lineIdx];
+            if (!line.Contains(":")) continue;
+            
+            string trimmed = line.Trim().TrimEnd(',');
+            int colonIndex = trimmed.IndexOf(':');
+            if (colonIndex < 0) continue;
+            
+            string propertyName = trimmed.Substring(0, colonIndex).Trim().Trim('"');
+            string valueStr = trimmed.Substring(colonIndex + 1).Trim();
+            
+            if (!material.HasProperty(propertyName)) continue;
+
+                        // 纹理类型：值以 { 开头
+            if (valueStr.StartsWith("{"))
+            {
+                // 拼接多行直到找到 }
+                string texJson = valueStr;
+                while (!texJson.Contains("}") && lineIdx + 1 < lines.Length)
+                {
+                    lineIdx++;
+                    texJson += lines[lineIdx];
+                }
+                
+                // 纹理贴图本身：仅在用户选择加载纹理时还原
+                if (loadTextures)
+                {
+                    // 主纹理已有时不替换
+                    bool isMainTex = (propertyName == "_BaseMap" || propertyName == "_MainTex");
+                    if (isMainTex && material.GetTexture(propertyName) != null)
+                    {
+                        // 跳过主纹理替换，但仍读取 Tiling/Offset
+                    }
+                    else
+                    {
+                        // 解析纹理路径
+                        string texPath = ExtractJsonStringValue(texJson, "path");
+                    
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null)
+                            {
+                                material.SetTexture(propertyName, tex);
+                            }
+                            else
+                            {
+                                missingTextures.Add($"  {propertyName}: {texPath}");
+                            }
+                        }
+                        else
+                        {
+                            // 路径为空，清除纹理
+                            material.SetTexture(propertyName, null);
+                        }
+                    }
+                }
+                
+                // Tiling/Offset 属于数值参数，无论是否加载纹理都应还原
+                float[] tilingValues = ExtractJsonFloatArray(texJson, "tiling");
+                if (tilingValues != null && tilingValues.Length == 2)
+                {
+                    material.SetTextureScale(propertyName, new Vector2(tilingValues[0], tilingValues[1]));
+                }
+                
+                float[] offsetValues = ExtractJsonFloatArray(texJson, "offset");
+                if (offsetValues != null && offsetValues.Length == 2)
+                {
+                    material.SetTextureOffset(propertyName, new Vector2(offsetValues[0], offsetValues[1]));
+                }
+                
+                continue;
+            }
+            
+            // 数组类型（Color或Vector）
+            if (valueStr.StartsWith("["))
+            {
+                valueStr = valueStr.Trim('[', ']');
+                string[] parts = valueStr.Split(',');
+                if (parts.Length == 4)
+                {
+                    float[] values = new float[4];
+                    for (int i = 0; i < 4; i++)
+                    {
+                        float.TryParse(parts[i].Trim(), out values[i]);
+                    }
+                    
+                    // 根据 MaterialProperty.type 区分 Vector 和 Color，避免误用 SetColor
+                    MaterialProperty.PropType loadPropType;
+                    bool isVector = propTypeMap.TryGetValue(propertyName, out loadPropType)
+                                 && loadPropType == MaterialProperty.PropType.Vector;
+                    
+                    if (isVector)
+                    {
+                        material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
+                    }
+                    else
+                    {
+                        try
+                        {
+                            material.SetColor(propertyName, new Color(values[0], values[1], values[2], values[3]));
+                        }
+                        catch
+                        {
+                            material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Float类型
+                if (float.TryParse(valueStr, out float floatValue))
+                {
+                    material.SetFloat(propertyName, floatValue);
+                }
+            }
+        }
+
+        // 显示缺失纹理警告
+        if (missingTextures.Count > 0)
+        {
+            string msg = "以下纹理资源不存在，已跳过：\n\n" + string.Join("\n", missingTextures);
+            EditorUtility.DisplayDialog("纹理缺失警告", msg, "确定");
+            Debug.LogWarning("[Glass_carWindowGUI] 读档时部分纹理资源不存在:\n" + string.Join("\n", missingTextures));
+        }
+        
+        // 同步 shader_feature toggle 对应的 keyword
+        SyncShaderKeywords(material);
+        
+        EditorUtility.SetDirty(material);
+        if (m_MaterialEditor != null) m_MaterialEditor.Repaint();
+        SceneView.RepaintAll();
+
+        string texInfo = loadTextures ? "（含纹理）" : "（仅参数）";
+        Debug.Log($"玻璃材质参数已从存档加载{texInfo}: {filePath}");
+    }
+
+    /// 从简易JSON中提取字符串值
+    private static string ExtractJsonStringValue(string json, string key)
+    {
+        string search = "\"" + key + "\":";
+        int idx = json.IndexOf(search);
+        if (idx < 0) return null;
+        
+        int start = json.IndexOf('"', idx + search.Length);
+        if (start < 0) return null;
+        int end = json.IndexOf('"', start + 1);
+        if (end < 0) return null;
+        
+        return json.Substring(start + 1, end - start - 1);
+    }
+    
+    /// 从简易JSON中提取浮点数组
+    private static float[] ExtractJsonFloatArray(string json, string key)
+    {
+        string search = "\"" + key + "\":";
+        int idx = json.IndexOf(search);
+        if (idx < 0) return null;
+        
+        int start = json.IndexOf('[', idx);
+        if (start < 0) return null;
+        int end = json.IndexOf(']', start);
+        if (end < 0) return null;
+        
+        string arrayStr = json.Substring(start + 1, end - start - 1);
+        string[] parts = arrayStr.Split(',');
+        float[] result = new float[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            float.TryParse(parts[i].Trim(), out result[i]);
+        }
+        return result;
+    }
+    
+    /// 同步所有 shader_feature toggle 对应的 keyword
+    /// 读档后必须调用，否则 shader 分支（折射/反射/法线/顶点变形/FresnelRamp）不会切换，
+    /// 透明排序等依赖 keyword 的渲染状态也会残留旧值
+    private void SyncShaderKeywords(Material material)
+    {
+        // 每个 toggle 属性名 -> 对应的 shader keyword
+        var toggleKeywords = new System.Collections.Generic.Dictionary<string, string>
+        {
+            { "_UseNormalMap",         "_USENORMALMAP"          },
+            { "_UseRefraction",        "_USEREFRACTION"         },  // Glass_MobileNew
+            { "_UseReflection",        "_USEREFLECTION"         },
+            { "_UseVertexDeform",      "_USEVERTEXDEFORM"       },  // Glass_MobileNew
+            { "_DeformUseUV",          "_DEFORM_USE_UV"         },  // Glass_MobileNew 顶点变形UV模式
+            { "_UseFresnelRamp",       "_USEFRESNELRAMP"        },  // Glass_carWindow
+            { "_UseVertexDisplacement","_USEVERTEXDISPLACEMENT" },  // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+            { "_UseEmissionMap",       "_USEEMISSIONMAP"        },  // 自发光（Glass_MobileNew / 参考 PBR_Mobile_NEW.shader）
+        };
+
+        foreach (var pair in toggleKeywords)
+        {
+            if (!material.HasProperty(pair.Key)) continue;
+
+            bool enabled = material.GetFloat(pair.Key) > 0.5f;
+            if (enabled)
+                material.EnableKeyword(pair.Value);
+            else
+                material.DisableKeyword(pair.Value);
+        }
+
+        // 注意：不在此处调用 ApplyRenderMode，避免读档 / 重置路径覆盖用户自定义的
+        // material.renderQueue / _ZWrite / SetOverrideTag("RenderType")。
+        // ApplyRenderMode 仅在 DrawRenderSettings 的 _RenderMode toggle 改变时被调用（手动切模式场景）。
+        // _RENDERMODE_TRANSPARENT / _RENDERMODE_OPAQUE keywords 仍会通过 [KeywordEnum] 自动同步。
+    }
+
+    /// 重置材质参数为默认值（使用Default存档或shader默认值）
+    private void ResetMaterialParameters()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        string defaultPresetPath = GetPresetPath("Default");
+        
+        // 检查Default存档是否存在
+        if (System.IO.File.Exists(defaultPresetPath))
+        {
+            // 使用Default存档
+            if (EditorUtility.DisplayDialog("重置参数", 
+                "将使用Default存档重置参数。\n\n注意：纹理不会被重置。", 
+                "确定", "取消"))
+            {
+                LoadMaterialParametersFromFile(defaultPresetPath, true);
+            }
+        }
+        else
+        {
+            // Default存档不存在，创建它
+            if (EditorUtility.DisplayDialog("创建Default存档", 
+                "Default存档不存在，将使用Shader默认值创建Default存档。", 
+                "确定", "取消"))
+            {
+                // 创建临时材质以获取shader默认值
+                Material tempMaterial = new Material(material.shader);
+                
+                Shader shader = material.shader;
+                int propertyCount = ShaderUtil.GetPropertyCount(shader);
+                
+                // 手动构建JSON（与SaveMaterialParametersToFile一致的格式）
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.AppendLine("{");
+                bool first = true;
+                
+                for (int i = 0; i < propertyCount; i++)
+                {
+                    string propertyName = ShaderUtil.GetPropertyName(shader, i);
+                    ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
+                    
+                    if (!tempMaterial.HasProperty(propertyName)) continue;
+                    
+                    if (!first) sb.AppendLine(",");
+                    first = false;
+                    
+                    sb.Append("  \"" + propertyName + "\": ");
+                    
+                    switch (propertyType)
+                    {
+                        case ShaderUtil.ShaderPropertyType.Color:
+                            Color c = tempMaterial.GetColor(propertyName);
+                            sb.Append($"[{c.r}, {c.g}, {c.b}, {c.a}]");
+                            break;
+                        case ShaderUtil.ShaderPropertyType.Vector:
+                            Vector4 v = tempMaterial.GetVector(propertyName);
+                            sb.Append($"[{v.x}, {v.y}, {v.z}, {v.w}]");
+                            break;
+                        case ShaderUtil.ShaderPropertyType.Float:
+                        case ShaderUtil.ShaderPropertyType.Range:
+                            sb.Append(tempMaterial.GetFloat(propertyName).ToString());
+                            break;
+                        case ShaderUtil.ShaderPropertyType.TexEnv:
+                            sb.Append("{\"path\": \"\", \"tiling\": [1, 1], \"offset\": [0, 0]}");
+                            break;
+                    }
+                }
+                
+                sb.AppendLine();
+                sb.AppendLine("}");
+                
+                System.IO.File.WriteAllText(defaultPresetPath, sb.ToString());
+                
+                Object.DestroyImmediate(tempMaterial);
+                
+                Debug.Log($"玻璃材质Default存档已创建: {defaultPresetPath}");
+                
+                // 加载Default存档（重置模式，不弹纹理提示）
+                LoadMaterialParametersFromFile(defaultPresetPath, true);
+            }
+        }
+    }
+}
