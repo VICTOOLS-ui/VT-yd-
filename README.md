@@ -1,0 +1,930 @@
+**VicTools (YD) - Unity 编辑器工具集**
+
+## 概述
+
+VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的场景管理、材质查找、资源批量处理等功能，能显著提升美术及程序员在 Unity 引擎中的开发效率。该工具集包含自定义着色器 PBR_Mobile 及相关辅助脚本工具。
+
+**类别**: Editor
+**文档链接**: [飞书文档](https://my.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d)
+
+## <更新日志>
+
+### 版本 2.13.2
+
+- PBR_Mobile7.4 禁用Compute Buffer自定义灯光系统。
+- 【VT】优化所有材质预设目录结构，避免项目显示不必要内容。
+- 【场景工具 v3.2】修复资源箱【同名同类型灰色对象】产生逻辑。
+- 【场景工具 v3.1】修复资源箱“<未知类型> 未知对象”产生逻辑。
+
+---
+
+### 版本 2.13.1
+
+- [Tools] SpotLightVolume v7.3 半透明渲染 overdraw 优化 + ZTest 可配置（推荐 LEqual 整体更轻量，次选 Disabled）。",
+- [Material:URP] PBR_Mobile_NEW9.0 移除自定义 ComputeBuffer 点光/聚光系统，改为接收 Unity 实时附加光源（点光/聚光）照明，排除阴影影响（不采样附加光 shadow map）。
+
+---
+
+### 版本 2.13.0
+
+- 优化工具布局图标显示。
+
+- 【场景工具 v3.0】优化资源箱按钮，新增显示资源类型图标，显示场景对象激活状态眼睛图标；资源箱列表中 <GameObject> 类型右侧添加激活状态图标按钮；修复资源箱【按类型排序】按钮，之前会破坏暂时无效的场景对象；修复未激活对象恢复。
+
+  ![image-20260922180914043](./Documentation~/README.assets/image-20260922180914043.png) 
+
+- [Tools] SpotLightVolume v7.0 优化工具性能，每帧 0 次 SetPropertyBlock（静止 dirty 命中）+ 0 次 UpdateOcclusion（守门跳过）+ 0 次 Native get- 稳定：6 个 shader变体编译无警告。
+
+---
+
+### 版本 2.12.8
+
+- [Material:URP] FurShell 1.9 完善边缘光算法，优化毛发逆光效果表现。
+
+  ![cat-fur8_1.9](./Documentation~/README.assets/cat-fur8_1.9.gif) 
+
+- [Material:URP] PBR_Mobile_NEW8.7 排除部分移动端 GPU 驱动对「[loop]/[unroll] + continue」组合支持不完善，存在跨平台稳定性风险。
+- 【场景工具 v2.34】添加资源箱存档目录打开按钮。
+
+---
+
+### 版本 2.12.7
+
+- [Material:URP] PBR_Mobile_NEW8.6 添加反射贴图水平旋转偏移、水平镜像选项参数。
+- [Material:URP] Texture 1.6 修复 Cutout + PreZ 环境下透贴像素显示为不透明的 bug。
+- [Material:URP] TextureGaussianBlur_HLSL v2.0 添加模糊蒙版控制。
+- [Material:URP] FurShell 1.8 优化边缘光透光，减弱模型中间部分边缘光，添加边缘光相关参数。
+- [Tools] Compute Buffer Tool v4.4 修复合享材质剔除 / 添加 材质灯光选项不生效。
+
+---
+
+### 版本 2.12.6
+
+- [Tools] Compute Buffer Tool 4.0 性能与可维护性重构 - 消除重复逻辑、修复聚光灯自适应间隔失效、清理死代码。
+
+- [Tools] ComputeBuffer 4.1 跨场景渲染保护 - 修复共享材质在缺少灯光管理器的场景变黑/跳过渲染；对外接口与既有功能保持不变。
+
+- [Tools] Compute Buffer Tool v4.2 材质按钮自动识别选中内容 - 选中灯光时按钮切换为“添加/剔除点灯·射灯”，其余情况仍为材质增删；最高支持8盏点灯、2盏聚光灯。
+
+- [Material:URP] CustomParticle 1.3 修改主纹理键名统一_BaseMap。
+
+- [Material:URP] Custom_Ocean 2.0 性能优化重构（渲染结果与原版保持一致，无可察觉差异）。
+
+- [Material:URP] PBR_Mobile_NEW8.6 添加反射贴图水平旋转偏移、水平镜像选项参数。
+
+  ![PBR_Mobile_NEW8.6](./Documentation~/README.assets/PBR_Mobile_NEW8.6.gif) 
+
+- [Tools] FPS工具只使用 FPS 专用画布 “Canvas (FPS)”：已存在则复用，不存在则创建。
+				
+---
+
+### 版本 2.12.5
+
+- 【新】[Material:URP] Custom_Ocean 1.7 海面材质，ForwardLit Pass 接入 URP 雾，处理方式对齐 PBR_Mobile_NEW：multi_compile_fog + 顶点 ComputeFogFactor 存入 Varyings.fogFactor + 片元末尾 MixFog，不新增任何雾参数。
+
+  ![ocean1](./Documentation~/README.assets/ocean1.gif) 
+
+- [Tools] Compute Buffer Tool v3.7 修复自定义灯光模拟工具管理器修改保存机制。
+
+- [Material:URP] Glass_MobileNew.v3.2 性能重构（渲染结果不变）：移除无用的 _SHADOWS_SOFT 变体（ForwardLit 变体数减半）。
+
+---
+
+### 版本 2.12.4
+
+- [Edit] RoadScroll v2.6 修复 ESC 选中脚本对象功能在 roadSegment 包含子对象时失效。
+- [Material:URP] TransCutout3.0 透明计算统一移至 DepthOnly pass，v3.0 关键改版（基于PreZ）。
+- [Material:URP] PBR_Mobile_NEW8.4 PBR 粗糙度钳制对齐 URP 标准：perceptualRoughness 允许到 0（不再硬钳 0.01）。
+- [Material:URP] PBR_Mobile_Trans8.0 继承 PBR_Mobile_NEW8.4：替换高光算法为GGX（ARM Siggraph 2015 移动优化版，D*V*F合并近似）。
+- [Material:URP] Glass_MobileNew.v3.1 添加法线贴图交错游走，实现波浪起伏效果，修复法线强度参数影响反射图错位。
+
+---
+
+### 版本 2.12.3
+
+- PBR_Mobile_NEW8.2 优化“禁用环境光”半兰伯特参数控制效果，当“禁用全局光”参数打开时使用优化算法。
+
+- SpotLightVolume【探照灯体积雾 v6.4】工具更新创建性能，叠加曝光过度问题，增加“后处理优化”分组：曝光系数 + 软饱和开关；兼容旧存档读取。
+
+- Glass_MobileNew.v3.0 添加自发光参数，存档兼容旧版本。
+
+- Tree_Trans 2.0 共享片段已抽取到 Tree_Trans_Common.hlsl（CBUFFER、纹理、ApplyWind、alpha clip、Ramp、法线扰动、虚拟阴影 tint）；添加GUI。
+
+- PBR_Mobile7.2 添加“禁用主光亮度”选项，取消勾选时使用自定义亮度值。
+
+- PBR_Mobile_NEW8.3 阴影高光衰减优化：高光在阴影处按拟合曲线 x²·(0.2+0.8x)（等价 x^2.8）衰减（加强阴影清晰同时保留暗部高光细节）。
+
+  ![image-20260904103520813](./Documentation~/README.assets/image-20260904103520813.png) 
+
+---
+
+### 版本 2.12.2
+
+- 【场景工具 v2.32】添加继承位移旋转功能按钮；PBR_Lighting材质切换按钮更新适配PBR_Mobile_NEW。
+
+  ![image-20260828113309334](./Documentation~/README.assets/image-20260828113309334.png) 
+
+- PBR_Lighting 添加亮度参数以适配PBR_Mobile_NEW效果。
+
+  ![image-20260827185426207](./Documentation~/README.assets/image-20260827185426207.png) 
+
+- LatticeModifier v3.34 修复旧场景反序列化丢数据：targetMode 和 targetRenderer 保留字段声明（防止旧场景反序列化丢数据），但标记 HideInInspector，运行时不再使用 SingleRenderer 路径。
+
+---
+
+### 版本 2.12.1
+
+- PBR_Mobile_NEW8.0 新增 GGXSpecularTerm（ARM Siggraph 2015 移动优化版），高光形状更宽、尾部更长，粗糙表面高光更自然，优化室内无光场景表现。
+
+- PBR_Mobile_NEW8.1 间接高光：使用反射方向SH增强法线依赖（Lit反射探针的轻量替代）无光照贴图时额外采样反射方向SH，光滑度越高反射方向权重越大（物理正确）添加PBR参数重置按钮。
+
+  ![image-20260827143759673](./Documentation~/README.assets/image-20260827143759673.png)
+
+- Menu添加保存镜像模型功能菜单，解决镜像模型重开场景丢失问题。
+
+- Compute Buffer Tool v3.6 匹配PBR_Mobile_NEW材质。
+
+---
+
+### 版本 2.11.2
+
+- RoadScroll v2.3 无限循环偏移支持旋转方向，便以创建倾斜的滚动效果。
+- RoadScroll v2.4 启动时新增对挂载脚本的 RoadScroll 自身 transform.localPosition 按其局部坐标系下的 scrollDirection 方向，偏移做初始矫正。
+- RoadScroll v2.5 优化超大段对象（segmentLength >> 段 mesh 真实尺寸）下\"初始偏移矫正产生大偏差\"的问题。
+- RoadScrollEditor v2.8 Inspector 实时编辑：间距 segmentLength / scrollDirection 任一变化 → 实时重排段。
+- RoadScrollEditorHelper v2.6 添加 ESC 快捷键：选中 roadSegment 时按 ESC 跳转到所属 RoadScroll 父对象。
+- Grass 2.5 阴影接收改为顶点阴影：阴影衰减值经 varying 插值后 fragment 直接使用，不再逐像素采样 shadow map _UseVertexShadow 开关：关闭时回退为原 GetMainLight(shadowCoord) 像素阴影路径。
+- 场景工具 v2.31 防御：obj 可能是纹理 / Prefab / .meta / 子资产等非场景资产，只接受 .unity 场景资产（含可选的 .unity.meta 后缀防御）。
+
+---
+
+### 版本 2.11.1
+
+- 【Menu】菜单添加 [镜像模型] 功能，对选中对象进行快速安全镜像处理，避免出现法线贴图反转问题。
+
+- PBR_Mobile 7.2 主材质添加[查找贴图]按钮，一键自动赋予PBR配套贴图，无需一张张贴图配置。
+
+![cam0114](./Documentation~/README.assets/cam0114.gif)
+
+---
+
+### 版本 2.11.0
+
+- 材质GUI添加材质参数着色样式，根据参数类型进行分类着色，让材质参数更直观。
+
+- "添加新工具【无限循环滚动v2.2】，可以快速对美术资源进行无限循环游走滚动，可以用于道路背景墙等无限移动模拟。
+
+  ![image-20260805223257776](./Documentation~/README.assets/image-20260805223257776.png) ![RoadScroll](./Documentation~/README.assets/RoadScroll.gif)
+
+- 添加新材质【Texture-UI 1.0】 基于 Custom/Texture 改编的UI专用版本。
+
+- 材质读档添加“排除主纹理”选项按钮，读取材质参数时可以选则不读取主要贴图包含PBR和自发光配套贴图。
+
+---
+
+### 版本 2.10.6
+
+- 【新材质】TransCutout 2.4 全透明 stencil mask 材质，集成 DitherTemporalAA 函数（颗粒状渐变，模拟 UE 同名函数效果），支持粒子系统 ColorOverLifetime 驱动渐变颜色和透明阈值。
+
+  ![particleMask4](./Documentation~/README.assets/particleMask4.gif) 
+
+- Glass_carWindow 1.4 添加顶点风动位移，可用于模拟抖动、生物游动效果。
+
+  ![paopao](./Documentation~/README.assets/paopao.gif) 
+  
+- 整理各类型材质，添加图标显示。
+
+  ![image-20260728162049158](./Documentation~/README.assets/image-20260728162049158.png) 
+
+- FPS 5.4 移除TMP支持，统一使用 UnityEngine.UI.Text。
+
+---
+
+### 版本 2.10.5
+
+- LatticeModifierEditor v3.32 PlayMode 性能优化：进入运行时（Application.isPlaying）后，OnSceneGUI 跳过所有点/线着色计算（背面判断、深度排序、点拖拽、框选等），改为统一浅灰色立方体外壳，大幅降低 Play Mode 下的 Editor 性能开销。
+
+- ShadowReceiver 6.0 支持DepthPrimingMode=Forced，使用手动软化阴影方案，解决阴影在透明渲染序列无法使用软阴影的问题。
+
+  ![ShadowReceiver5](./Documentation~/README.assets/ShadowReceiver5.gif) 
+
+  ShadowReceiver 12.0 接收阴影材质（等边三角形 120° 软阴影 + 单次 shadow map 比较，无 PCF 开销）
+  
+- 新增一键配置帧率显示工具，方便美术配置帧率显示，查看场景性能消耗。
+
+  ![image-20260720095834879](./Documentation~/README.assets/image-20260720095834879.png)![image-20260720095728128](./Documentation~/README.assets/image-20260720095728128.png)
+  
+- PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
+
+  ![image-20260723161800859](./Documentation~/README.assets/image-20260723161800859.png) 
+  
+- 场景工具 v2.30 【选择名称:】按钮支持选中未激活对象。
+
+---
+
+### 版本 2.10.4
+
+- LatticeModifier v3.26 重置晶格体位置：新增 initLatticePos/initLatticeRot/initLatticeScale 序列化字段，InitializeLattice 时保存初始 Transform，ResetToInitialTransform() 可复位到初始化时的位姿。
+
+   ![image-20260708164205316](./Documentation~/README.assets/image-20260708164205316.png) 
+
+- LatticeModifierEditor v3.31 晶格线宽（屏幕像素）。Handles.DrawLine 是固定 1px，改用 DrawAAPolyLine 可控。
+
+- 现有材质针对DepthPrimingMode（深度预填充模式）Forced模式，优化性能与适配。
+   - FurShell_Mobile_Single_Combined 毛发材质 Queue 改为 Transparent 队列。
+   - Grass 2.4 DepthOnly pass 改为纯 vertex（不跑 Hull/Domain/Geometry），用草根 mesh 顶点位置写深度，解决 URP DepthPrimingMode=Forced 下 GS 双面薄片 Z 精度不一致导致的黑色面重叠问题。
+   - OutlineZOffset1.4 添加 DepthOnly pass 用于兼容 URP DepthPrimingMode=Forced，避免描边材质不可见。
+
+- PBR_Mobile 6.5 性能优化：MRA 贴图条件采样（仅 _USEMSAMAP 开启时采样），新增 _DisableBakedSpecular / _DisableIndirectSpecular 开关按需裁剪烘焙高光与间接高光计算，GUI 同步暴露选项。
+
+- PBR_Mobile_Trans 6.5 _ZWrite 改用 shader_feature_local 关键字化（_ZWWRITE），仅在使用时编译对应变体。
+
+- 场景工具 v2.29 资源箱添加【场景】按钮，一键将当前打开的所有场景（多场景支持）放入资源箱。
+
+---
+
+### 版本 2.10.3
+
+- 场景工具 v2.28 资源箱场景对象存储机制增强：每个场景对象持久化记录 scenePath / sceneName / sceneGuid。
+- LatticeModifier v3.23 性能 + 内存根治（针对 26 Renderer 共享 LatticeModifier 场景，端到端治理玩家端内存增长）。
+   「ESC」快捷键在取消晶格点选择的基础上，支持晶格对象与模型对象快速切换。
+- LatticeModifier v3.24 内部点压缩（surfaceOnly 模式）。
+  
+   ![image-20260707172325638](./Documentation~/README.assets/image-20260707172325638.png)![image-20260707172546545](./Documentation~/README.assets/image-20260707172546545.png)
+   
+- LatticeModifierEditor v3.26 解决多 Inspector 窗口下「扩展选择」「取消选择」按钮锁定/失效。
+- LatticeModifierEditor v3.27 快捷键 Esc 选中晶格体定位优化：FindLatticesByName 增加渲染器目标验证，排除同名但无关联的晶格，解决同名模型选中错误晶格体的问题。
+
+---
+
+### 版本 2.10.2
+
+- SpotLightVolume v6.1 - 射线遮挡支持角色碰撞：新增occlusionDetectTriggers选项，可检测Trigger类型碰撞体。
+
+- SpotLightVolume v6.2 - 蒙版投影：新增maskTexture蒙版纹理模拟窗格光柱投影，沿光轴等比投射到锥体横截面，支持enableMask开关和maskIntensity强度控制。
+  
+  ![image-20260629101349789](./Documentation~/README.assets/image-20260629101349789.png) 
+  
+- SpotLightVolumeCore v5.2 解决聚光灯体积光模拟边缘在深度雾中出现硬边问题。
+
+  ![image-20260626134001662](./Documentation~/README.assets/image-20260626134001662.png) 
+
+- LatticeModifier v3.10 修复「单个静态对象打包后不可见 / 材质变灰」的真正根因——运行时 Mesh 可读性，取消目标模式（SingleRenderer/MultiRenderer），单/多对象统一处理 + 修复污染。
+- LatticeModifier v3.11 修复「目标对象带缩放时晶格变形被放大（叠加）」。
+- LatticeModifier v3.12：缓存蒙皮数据（仅当确为带蒙皮目标时有意义；非蒙皮 Mesh 这些为空数组）。
+- LatticeModifier v3.13：取消蒙皮双缓冲 + 每帧重新赋值 sharedMesh。
+- LatticeModifier v3.14：变形性能优化，修复运行时帧率骤降（修正缓存网格命名避免每帧重建、消除 Mathf.Pow、权重缓存、变更检测改用相对矩阵刚性同移零开销）。
+
+---
+
+### 版本 2.10.1
+
+- 主菜单使用AdvancedDropdown菜单系统支持图标，添加相关菜单图标，支持菜单搜索。
+
+  ![image-20260618164421017](./Documentation~/README.assets/image-20260618164421017.png) 
+
+- LatticeModifierEditor 3.2 Inspector 暴露边缘羽化参数（feather），实时调整晶格边界变形衰减；添加晶格轴心设置；Esc 取消选择晶格点。
+
+- LatticeModifier 3.3 修复轴心旋转后变形方向错位：统一使用当前晶格变换计算参数坐标，轴心操作同步更新内部数据；修复Undo支持（记录子CP Transform）；羽化基于当前晶格包围盒从中心向边缘衰减。
+  
+- 场景工具 v2.27 修复【挑选-MissMat】逻辑，排除粒子Trail Material；添加重置场景对象位移旋转缩放变换工具按钮。
+
+---
+
+### 版本 2.10.0
+
+- LatticeModifier 3.0 重构：引入 DeformTarget 封装单 Renderer 变形管线，消除 Single/Multi 大量重复逻辑，添加【链接选中对象到晶格】功能按钮。
+
+- LatticeModifierEditor 3.1 新增多目标模式【修复丢失绑定】按钮，自动检测并重新链接列表中未绑定到晶格的 Renderer。
+
+- SmoothMeshNormal_1.6 优化【选择描边对象】按钮：选中 _OL 对象后立即刷新列表，保留所有操作按钮控件，固定平滑mesh后缀名。
+
+- 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh。
+
+---
+
+### 版本 2.9.8
+
+- TextureGaussianBlur_HLSL v1.0 — 高斯模糊材质 Shader。
+
+- Tools菜单添加：探照灯体积雾（SpotLightVolume），SpotLightVolume v1.0 - 优化轻量探照灯体积雾效果。
+
+  ![image-20260605150714558](./Documentation~/README.assets/image-20260605150714558.png) 
+  
+  SpotLightVolume v3.1 优化步进预计算为1步。效果上边缘过渡会稍微粗糙，性能有大幅提升。
+  
+  ![image-20260609171940276](./Documentation~/README.assets/image-20260609171940276.png) 
+
+---
+
+### 版本 2.9.7
+
+- Snow 1.1 优化雪地闪烁表现，陡峭斜面剔除：法线Y分量越小说明越陡峭，剔除闪光避免拉线。
+  Snow 1.2 使用_SparkleTex G通道噪波增强镜头转动时随机闪烁效果，添加【蒙版纹理密度】值，完善GUI参数说明。
+  
+  ![snow1](./Documentation~/README.assets/snow1.gif)
+  
+- 场景工具 v2.22 修复资源箱对象异常丢失，添加 ResourceBoxBuildPreprocessor — 打包前确保资源箱数据已保存。
+
+- FurShell 1.7 修复“使用圆锥风力”选项开关控制无效问题。
+
+- 毛发材质圆锥风力场 WindConeController2.0 优化控制参数，修复targetFurRenderer相关参数控制实时生效。
+
+- Grass 2.0 添加草地交互系统，添加草地控制器脚本。
+
+  ![grassCollision](./Documentation~/README.assets/grassCollision.gif)
+
+---
+
+### 版本 2.9.6
+
+- [Material] 菜单添加 +Ctrl 键时更换材质。
+
+- OutlineZOffset1.3 优化轮廓描边算法。
+
+  ![image-20260512104841829](./Documentation~/README.assets/image-20260512104841829.png)
+
+- Custom_Hair 2.1 添加【各向异性高光】选项控制是否计算高光。
+
+- SmoothMeshNormal_1.4 添加<创建描边模型>按钮，自动克隆 _OL 描边对象并生成平滑网格，添加描边材质预置接口。
+
+  ![image-20260509145733710](./Documentation~/README.assets/image-20260509145733710.png)
+
+- 【场景工具 v2.20】添加晶格对象快速选择按钮，按住Ctrl点击可以同时选中物体与晶格对象。
+
+  ![image-20260511155342859](./Documentation~/README.assets/image-20260511155342859.png)
+
+- LatticeModifier 2.11 修复 Undo 操作可能导致 Renderer 上的 Mesh 引用被恢复为 originalMesh 或 null。
+
+  LatticeModifierEditor 2.9 优化晶格体背面控制点压暗显示（支持透视/正交）；优化控制点显示顺序
+
+- Glass_MobileNew.v2.8 果冻效果实现，顶点变形支持 UV 采样模式（蒙皮模型稳定不跳动）；优化阴影与控制基础颜色关系。
+
+  ![image-20260512105012778](./Documentation~/README.assets/image-20260512105012778.png)
+
+- Grass 1.7 添加草体透贴纹理参数（支持公告板），UV使用两段草体高度平展，适用于1~2段草体，添加剔除方式选项。
+
+  ![image-20260512105312233](./Documentation~/README.assets/image-20260512105312233.png)
+
+---
+
+### 版本 2.9.5
+
+- [Material] 菜单添加新材质【Custom_Toon（卡通材质）、Custom_Hair（头发材质）】。
+
+- CustomToon 1.4(2D卡通材质) 添加【明暗对比】参数【自身阴影】选项；优化自身阴影过暗受环境光影响。
+
+  ![image-20260507110351071](./Documentation~/README.assets/image-20260507110351071.png)
+
+- CustomHair 2.0(头发材质) 改进使用Ramp渐变贴图作为头发高光渐变的控制（略微提高性能）。
+
+  ![image-20260507110543705](./Documentation~/README.assets/image-20260507110543705.png)
+
+- LatticeModifier 2.10 添加【扩展选择】按钮，可以扩展选择表面晶格控制点，优化控制点选择逻辑；添加【创建快照】功能按钮。
+
+  ![image-20260507110308540](./Documentation~/README.assets/image-20260507110308540.png)
+
+- 【场景工具 v2.19】 修复丢失对象删除出现的Bug。
+
+---
+
+### 版本 2.9.4
+
+- 【场景工具 v2.18】资源箱添加【按类型排序】按钮，对现有资源按类型排列，新增对象会自动按类型排列。
+
+  ![image-20260429144215583](./Documentation~/README.assets/image-20260429144215583.png)
+
+- 新增 [Material] 菜单，快速创建Custom Shader材质球。
+
+  ![image-20260429144142367](./Documentation~/README.assets/image-20260429144142367.png)
+
+  ![image-20260429144142367](./Documentation~/README.assets/MaterialMenu.gif)
+
+- [Tools] 菜单添加（晶格控制器、混合变形控制、主材质自发光闪烁、旋转动画控制）组件工具快速创建。
+
+  ![image-20260429141704471](./Documentation~/README.assets/image-20260429141704471.png)
+
+- Texture 1.3 不再依赖 DepthOnlyPass.hlsl，改为自己实现的轻量 pass，CBUFFER 用 _MainTex_ST 保持一致。
+
+- LatticeModifierEditor 2.4 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引，写入 selectedPoints 并触发 SceneView.RepaintAll()，Scene 视图里对应控制点会高亮显示。
+
+---
+
+### 版本 2.9.3
+
+- Grass 1.0 添加自定义草地生成材质，支持纹理通道控制生长长度。
+
+  ![image-20260421174921063](./Documentation~/README.assets/Grass1.gif)
+
+- LatticeModifier 2.7 安全 Mesh 销毁机制，只销毁 _LatticeDeform 变形副本，防止共享 Mesh 资源被误删导致模型消失。
+
+---
+
+### 版本 2.9.2
+
+- 主窗口添加Tools菜单：[创建晶格控制器]，可以对模型对象或者角色添加晶格变形，可以对晶格点进行Timeline动画控制。
+
+- LatticeModifier 1.0 FFD 晶格变形场，晶格挂在独立空物体上，目标对象拖入 targetRenderer，可被 Animation/Timeline K帧驱动变形。
+
+  ![Lattice1](./Documentation~/README.assets/Lattice1.gif)
+
+---
+
+### 版本 2.9.1
+
+- PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）
+
+- 优化所有自定义Shader UI布局，归类更清晰。
+
+- PBR_Lighting.shadergraph 材质修复主贴图Tilling Offset参数的共用问题。
+
+- BlendShapeAnimator v1.7 - 添加 SkinnedMeshRenderer 包围盒扩展，防止轴心偏移导致视锥剔除（修复轴心偏移问题）
+
+  ![image-20260417170533616](./Documentation~/README.assets/image-20260417170533616.png)
+
+---
+
+### 版本 2.9.0
+
+- OutlineOffset_URP v1.1 添加轮廓外描边材质。
+
+- SmoothMeshNormal v1.2 轮廓描边辅助工具用于圆滑mesh法线，添加<覆盖>选项，支持生成平滑网格直接覆盖原有Mesh。
+
+  ![image-20260409120239525](./Documentation~/README.assets/image-20260409120239525.png)
+  ![image-20260409155344198](./Documentation~/README.assets/image-20260409155344198.png)
+
+  ![image-20260409142034847](./Documentation~/README.assets/image-20260409142034847.png)
+
+- FurShell v1.6 添加法线纹理控制毛发簇效果。
+
+  ![image-20260409115809043](./Documentation~/README.assets/image-20260409115809043.png)
+
+- Glass_MobileNew.v2.2 添加法线控制顶点位移、uv游走实现水柱流动效果。
+
+  ![shuizhuA1](./Documentation~/README.assets/shuizhuA2.gif)
+
+- Glass_MobileNew.v2.3 添加顶点颜色R通道作为顶点位移蒙版，约束水流起始位置的偏移。
+
+  ![shuizhuA2.3](./Documentation~/README.assets/shuizhuA2.3.gif)
+
+- BlendShapeAnimator v1.3 - 支持 SkinnedMeshRenderer 和普通 MeshFilter 模型的顶点追踪
+
+  
+
+- PBR_Mobile v6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色。
+
+  ![image-20260409115948288](./Documentation~/README.assets/image-20260409115948288.png)
+
+- PBR_Mobile_Trans.shader 继承PBR_Mobile6.3 添加“禁用主光颜色”选项。
+
+- CustomParticle 1.2 水质感粒子材质，粒子系统控制透明
+
+  ![image-20260416105422156](./Documentation~/README.assets/image-20260416105422156.png)
+
+---
+
+### 版本 2.8.2
+
+- 【资源工具 v1.6】 设置贴图尺寸时检查 Override For Android 选项并关闭。
+
+- PBR_Mobile6.2 支持烘焙模式Shadowmask模式，修复该模式时使用顶点阴影时报错。
+
+- Tree_Trans1.0 植被透明材质，虚拟光照，ShadowMap  只带投影。
+
+---
+
+### 版本 2.8.1
+
+- 【场景工具2.17】添加【↓】快速统一赋予最后选中对象的材质按钮
+
+  ![image-20260320200508651](./Documentation~/README.assets/image-20260320200508651.png)
+
+  添加模型一键落地按钮，以碰撞体落地操作（Ctrl+点击：以模型底部落地）
+
+  ![PlaceObjectOnGround](./Documentation~/README.assets/PlaceObjectOnGround.gif)
+
+- PBR_Mobile6.1 添加变色通道控制，MRA贴图的 A 通道作为基础颜色蒙版；聚光灯自适应更新间隔独立于点光源的刷新率控制。
+
+  ![image-20260324153736775](./Documentation~/README.assets/image-20260324153736775.png)
+
+- 【材质查找1.4】支持按住Ctrl键加选查找到的模型与材质球
+
+---
+
+### 版本 2.8.0
+
+- 【性能分析1.8】对象统计添加错误选项用于列出相关潜在错误对象，扫描缺失脚本材质等对象
+
+  ![image-20260319160925481](./Documentation~/README.assets/image-20260319160925481.png)
+
+- 【资源工具1.5】修改设置尺寸判断为大于等于设定值
+
+- FurShell 1.4 毛发材质添加GUI控制，修复风场脚本圆锥体角度压扁Bug
+
+- PBR_Mobile6.0 完善所有效果，继承原始表现效果；添加[统一阴影]按钮，用于统一设置“自身阴影衰减”值，使场景中阴影保持一致的明暗度（包括PBR_Mobile_Trans）
+
+  ![image-20260319155508560](./Documentation~/README.assets/image-20260319155508560.png)
+
+- 【场景工具2.16】添加【选择材质】按钮，用于选择场景中选中对象的材质球可以进行批量设置参数（注意操作提示）
+
+  ![image-20260319113841675](./Documentation~/README.assets/image-20260319113841675.png)
+
+---
+
+### 版本 2.7.10
+
+- PBR_Mobile5.9 优化高光算法，高光随模型边缘形状挤压还原真实高光效果；增加金属反射对比及对反射的颜色控制。
+
+  ![PBR_Mobile58](./Documentation~/README.assets/PBR_Mobile58.gif)→![PBR_Mobile59](./Documentation~/README.assets/PBR_Mobile59.gif)
+  
+- Glass_carWindow添加Ramp渐变贴图，可用于模拟肥皂泡效果
+
+  ![image-20260316144444516](./Documentation~/README.assets/image-20260316144444516.png)
+
+---
+
+### 版本 2.7.9
+
+- PBR_Mobile5.8 优化高光基础能量：提高非金属材质的基础高光强度
+
+- EmissionFlicker1.0 PBR_Mobile自发光闪烁脚本
+
+- 添加"Custom\Texture"天空盒shader
+
+---
+
+### 版本 2.7.8
+
+- 【性能分析1.7】 对象统计模块添加静态对象统计快速选择
+
+- PBR_Mobile5.8 优化高光亮度，移除specularColor削减；烘焙高光受实时阴影影响（该版本高光更符合真实能量更高明亮）
+  - 添加【存档】【读档】【重置参数】按钮还原所有参数默认值（读取Default存档）
+
+    ![image-20260306151929212](./Documentation~/README.assets/image-20260306151929212.png)
+
+- 工具主窗口左上角添加【Menu】辅助功能菜单，包含（`校正(PBR_Mobile)烘焙高光方向`、`校正PBR_Mobile5.8高光数值`）
+
+  ![image-20260305153243070](./Documentation~/README.assets/image-20260305153243070.png)
+
+- 添加适合车窗玻璃材质`Custom/Glass_carWindow`
+
+  ![image-20260306154648216](./Documentation~/README.assets/Glass_carWindow2.gif)
+
+---
+
+### 版本 2.7.7
+
+- 【场景工具2.15】 添加一键切换lighting材质可接收实时灯光(用于场景烘焙打灯时查看实时灯光效果)快速切换功能；支持PBR_Mobile_Trans材质烘焙高光校正
+
+  ![image-20260304115913308](./Documentation~/README.assets/image-20260304115913308.png)
+  
+- PBR_Mobile5.6 修复烘焙后反射被烘焙光照覆盖的问题
+
+  ![image-20260304114632350](./Documentation~/README.assets/image-20260304114632350.png)
+  
+- PBR_Mobile5.7 烘焙投影支持，使用Unity标准的Subtractive模式方法
+
+---
+
+### 版本 2.7.6
+
+- 【性能分析1.6】
+  - 优化未使用资源扫描和删除逻辑，修复 Prefab 嵌套依赖检测问题
+  - 增强 Prefab 依赖关系检测，通过 GUID 引用识别嵌套 Prefab
+  - 单个资源删除和批量删除都会检查依赖关系，防止误删
+  - 列表中被引用的资源显示 "[被引用]" 标记，删除按钮置灰
+  - 删除资源前进行双重验证：AssetDatabase 依赖检查 + GUID 文本引用检查
+  - 对 Prefab、场景、材质等文件进行深度 GUID 引用扫描
+  - 优化依赖检查性能，使用批量处理和进度显示
+  
+- PBR_Mobile5.3 优化自身阴影平滑度，减少阶梯状硬边
+- PBR_Mobile5.4 性能优化 - 预计算PBR属性，消除重复计算，优化光源循环
+- PBR_Mobile5.5 完善自身阴影与半兰伯特阴影；Lambert光照作为遮罩来平滑阴影锯齿
+
+  ![image-20260304123220237](./Documentation~/README.assets/image-20260304123220237.png)
+
+---
+
+### 版本 2.7.5
+
+- PBR_Mobile5.2 优化材质UI操作界面，隐藏未激活的参数缩减界面
+- 【性能分析1.5】 优化未使用资源扫码准确度，精确查找BuildSetting中添加场景的资源使用，添加（扫描所有场景）选项
+- 【场景工具2.13】 优化挑选二级选项逻辑，更准确的挑选操作
+- 【Compute Buffer Tool v3.4】 管理器添加SpotTexture批量设置所有PBR_Mobile材质参数，优化在剔除、添加材质时更新材质参数
+
+---
+
+### 版本 2.7.4
+
+- 【场景工具2.12】优化资源箱丢失对象保留正确名称，启动工具自动刷新
+- 【ComputeBufferTool3.3】添加（剔除材质 ↑）按钮，可以剔除模型或Project中的材质球，强化（添加材质↓）按钮也可添加场景对象材质
+
+---
+
+### 版本 2.7.3
+
+- 【场景工具2.11】完善[挑选]按钮功能优化判断逻辑
+- 【ComputeBufferTool3.2】优化用户界面，添加（添加材质↓）按钮用于向管理器添加Project中选择的材质球
+
+---
+
+### 版本 2.7.2
+
+- 优化挑选选项逻辑；添加（Reset）按钮用于关闭所有一级选项
+
+---
+
+### 版本 2.7.1
+
+- 【场景工具2.9】添加[挑选]按钮，可以根据选项快速挑选相应对象，添加二级选择选项
+
+- 【ComputeBufferTool3.1】优化材质列表，添加（选择材质）按钮用于选择收集的材质球
+
+---
+
+### 版本 2.6.1
+
+- 【资源工具1.4】添加模型批量检查GenerateLightmapUVs 
+
+- 【场景工具2.8】添加[Mesh]按钮，根据场景非预设模型快速选择
+
+- PBR_Mobile5.1 添加聚光灯纹理彩色光环
+
+  ![](./Documentation~/README.assets/PBRM5.1.gif)
+
+---
+
+### 版本 2.6.0
+
+- 【场景工具2.7-资源箱】全局存档改为本地Library\VicTools；创建PathHelper类路径管理
+
+---
+
+### 版本 2.5.0
+
+- Package打包版本，添加Outline描边Shader，主材质PBR_Mobile沿用老guid避免替换旧文件时材质丢失
+
+---
+
+### 版本 1.5.0
+
+- 添加聚光灯支持
+- 优化编辑器模式实时更新
+- 改进资源箱文件管理
+- 增强性能分析功能
+
+---
+
+### 版本 1.4.0
+
+- 添加 Compute Buffer 多点光源支持
+- 改进材质批量控制系统
+- 优化着色器性能
+
+---
+
+### 版本 1.3.0
+
+- 添加场景性能分析器
+- 改进搜索历史管理
+- 优化用户界面
+
+---
+
+## 主要功能模块
+
+### 1. 场景工具 (ScenesTools)
+**核心功能**：
+- **速选工具**：快速选择场景中名称相似的对象
+- **资源箱系统**：拖拽式资源管理，支持保存/加载资源箱文件
+- **材质管理**：选择相同材质的对象，批量赋予材质
+- **层级操作**：设置层级、跳出层级、选择层级
+- **搜索历史**：智能搜索历史记录管理
+
+**特色功能**：
+- 支持拖拽 Project 或 Hierarchy 中的对象到资源箱
+- 资源箱文件管理，可保存为 JSON 文件
+- 支持 Ctrl/Shift 键多选操作
+- 自动保存资源箱数据，防止数据丢失
+
+### 2. PBR_Mobile 着色器系统
+**版本演进**：
+- PBR_Mobile 1.0-5.0：逐步添加金属度、粗糙度、AO、反射、点光源、聚光灯等高级功能
+
+**核心特性**：
+- **PBR 工作流**：金属度/粗糙度工作流，支持法线贴图
+- **Compute Buffer 支持**：多点光源和聚光灯支持
+- **性能优化**：移动端优化，支持顶点阴影
+- **烘焙支持**：支持光照贴图烘焙
+- **反射系统**：球形反射贴图，菲涅尔效果
+- **自发光**：HDR 自发光，饱和度控制
+
+**Shader 关键词**：
+- `_USEPOINTLIGHT`：启用点光源
+- `_USESPOTLIGHT`：启用聚光灯
+- `_USEREFLECTION`：启用反射
+- `_USEEMISSIONMAP`：启用自发光贴图
+- `_NORMALMAP`：启用法线贴图
+- `_USEMSAMAP`：启用金属度/粗糙度/AO 贴图
+
+### 3. Compute Buffer 光照管理器
+**核心功能**：
+- **点光源管理**：收集场景点光源，通过 Compute Buffer 传输到 GPU
+- **聚光灯管理**：支持聚光灯效果，包括光斑纹理
+- **性能优化**：距离剔除、视锥体剔除、自适应更新
+- **材质批量控制**：批量管理使用 PBR_Mobile 的材质
+- **动态效果**：渐变、闪烁、回弹动画效果
+
+**编辑器模式支持**：
+- 非运行模式下实时预览点光效果
+- 编辑器更新循环，模拟游戏循环
+- 实时响应 Inspector 参数变化
+
+### 4. 性能分析器 (ScenePerformanceAnalyzer)
+- 场景性能分析
+- 渲染统计
+- 内存使用情况
+- 优化建议
+
+### 5. 着色器材质查找器 (ShaderMaterialFinder)
+- 按着色器查找材质
+- 批量材质操作
+- 材质统计信息
+
+### 6. 项目工具 (ProjectTools)
+- 批量资源处理
+- 文件管理工具
+- 自动化工作流
+
+## 使用方式
+
+### 打开主窗口
+1. 在 Unity 编辑器菜单栏选择：`Tools/VicTools(YD)/[ ScenesTools ]`
+2. 或使用快捷键（如果配置）
+
+### 主要工作流程
+1. **场景管理**：
+   - 使用搜索框查找场景对象
+   - 拖拽对象到资源箱进行临时存储
+   - 使用资源箱文件保存常用对象集合
+
+2. **材质操作**：
+   - 选择对象后点击"选择相同材质对象"
+   - 从资源箱中选择材质并赋予选中对象
+   - 使用材质选择器批量操作
+
+3. **光照设置**：
+   - 将场景中的点光源和聚光灯添加到 ComputeBufferLightManager
+   - 调整光照参数（强度、范围、衰减）
+   - 启用/禁用点光源或聚光灯效果
+
+4. **性能分析**：
+   - 打开性能分析器窗口
+   - 分析场景性能瓶颈
+   - 获取优化建议
+
+## 技术特点
+
+### 1. 架构设计
+- **模块化设计**：每个工具都是独立的子窗口
+- **可扩展性**：易于添加新工具模块
+- **单例模式**：ComputeBufferLightManager 使用单例模式确保全局访问
+
+### 2. 性能优化
+- **Compute Buffer**：使用 GraphicsBuffer 高效传输光源数据
+- **剔除系统**：距离剔除和视锥体剔除减少 GPU 负载
+- **自适应更新**：根据相机移动速度动态调整更新频率
+- **LOD 系统**：根据距离使用不同精度的光照计算
+
+### 3. 用户体验
+- **拖拽支持**：直观的拖拽操作
+- **搜索历史**：智能搜索历史管理
+- **快捷键**：支持 Ctrl/Shift 键多选操作
+- **实时预览**：编辑器模式下实时效果预览
+
+### 4. 数据持久化
+- **资源箱文件**：JSON 格式保存资源箱数据
+- **EditorPrefs**：保存用户偏好设置
+- **场景对象标识**：使用唯一标识符保存场景对象引用
+
+## 配置说明
+
+### 1. ComputeBufferLightManager 配置
+```csharp
+// 在场景中创建 GameObject 并添加 ComputeBufferLightManager 组件
+// 配置参数：
+- maxLights: 最大支持的点光源数量（1-8）
+- updateFrequency: 更新频率（1-60 Hz）
+- dontDestroyOnLoad: 场景切换时不销毁
+- autoFindMaterials: 自动查找 PBR_Mobile 材质
+```
+
+### 2. PBR_Mobile 着色器配置（新版 PBR_Mobile_NEW）
+```csharp
+// 材质属性分组：
+1. Base Properties: 基础颜色和贴图
+2. Metallic Roughness AO: 金属度、粗糙度、AO
+3. Normal Map: 法线贴图设置
+4. Emission: 自发光设置
+5. Reflection: 反射设置
+6. Custom Point Lights: 自定义点光源
+7. Custom Spot Lights: 自定义聚光灯
+```
+
+### 3. 编辑器窗口配置
+- **窗口顺序**：可自定义工具窗口排列顺序
+- **停靠设置**：支持停靠式窗口行为配置
+- **窗口尺寸**：自动保存窗口位置和尺寸
+
+## 注意事项
+
+### 1. 兼容性
+- **Unity 版本**：支持 Unity 2021.3 及以上版本
+- **渲染管线**：支持 Universal Render Pipeline (URP)
+- **平台**：主要针对移动端优化，也支持 PC
+
+### 2. 性能考虑
+- 点光源数量较多时注意性能影响
+- 启用视锥体剔除可显著提升性能
+- 使用适当的 maxLights 值平衡效果和性能
+
+### 3. 使用建议
+- 资源箱适合临时存储常用对象
+- 对于频繁使用的对象集合，建议保存为资源箱文件
+- 使用性能分析器定期检查场景性能
+
+## 开发指南
+
+### 1. 添加新工具
+1. 创建继承自 `SubWindow` 的类
+2. 实现必要的生命周期方法（OnEnable, OnGUI 等）
+3. 工具会自动注册到主窗口
+
+### 2. 扩展着色器功能
+1. 在 PBR_Mobile.shader 中添加新的 Properties
+2. 添加对应的 Shader 关键词
+3. 在 ComputeBufferLightManager 中添加相应的控制逻辑
+
+### 3. 自定义样式
+- 使用 `EditorStyle.Get` 获取统一样式
+- 可在 `VicToolsStyle.cs` 中定义自定义样式
+
+## 故障排除
+
+### 常见问题
+1. **点光源不显示**：
+   - 检查 ComputeBufferLightManager 是否启用
+   - 确认点光源已添加到 pointLights 列表
+   - 检查材质是否启用了 `_USEPOINTLIGHT` 关键词
+
+2. **资源箱对象丢失**：
+   - 场景切换可能导致场景对象引用丢失
+   - 建议使用资源箱文件保存重要对象集合
+   - 使用"刷新"按钮尝试重新加载丢失的对象
+
+3. **性能问题**：
+   - 减少 maxLights 值
+   - 启用距离剔除和视锥体剔除
+   - 使用性能分析器查找瓶颈
+
+### 调试信息
+- 启用调试日志查看详细操作信息
+- 使用 Scene 视图的 Gizmos 可视化点光源范围
+- 检查 Console 窗口的警告和错误信息
+
+
+
+## 贡献指南
+
+欢迎提交 Issue 和 Pull Request 来改进 VicTools。
+
+### 代码规范
+- 使用 C# 编码规范
+- 添加必要的注释
+- 保持向后兼容性
+
+### 测试要求
+- 新功能需要包含测试用例
+- 确保编辑器模式下功能正常
+- 测试不同 Unity 版本的兼容性
+
+## 许可证
+
+本工具集遵循 MIT 许可证协议。详情请查看包内的 LICENSE 文件。
+
+**许可证摘要**：
+- 允许自由使用、复制本软件的副本
+- 要求在所有副本或重要部分中包含版权声明和许可声明
+- 本软件按"原样"提供，不提供任何形式的明示或暗示保证
+- 作者或版权持有人不对因本软件或本软件的使用而产生的任何索赔、损害或其他责任承担责任
+
+## 支持与反馈
+
+如有问题或建议，请通过以下方式联系：
+- 飞书文档：[VicTools 文档](https://my.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d)
+- Issue 跟踪：在项目仓库中提交 Issue
+- 邮件支持：联系包维护者
+
+---
+
+*VicTools - 提升 Unity 开发效率的瑞士军刀*

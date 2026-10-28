@@ -1,0 +1,38 @@
+{
+    "lightSourceRadius": 0.10000000149011612,
+    "fallOffStart": 9.020000457763672,
+    "maxDistance": 27.729999542236329,
+    "edgeFade": 1.3329999446868897,
+    "endFade": 0.4189999997615814,
+    "glareFrontal": 0.3400000035762787,
+    "glareBehind": 0.1080000028014183,
+    "intensity": 0.9700000286102295,
+    "startBoostIntensity": 3.0,
+    "startBoostRange": 4.309999942779541,
+    "centerFade": 0.5,
+    "colorFromLight": true,
+    "volumeColor": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+    ],
+    "blendMode": 1,
+    "coneSides": 8,
+    "coneSegments": 1,
+    "enableOcclusion": true,
+    "occlusionLayerMask": 487,
+    "occlusionUpdateInterval": 0.08500000089406967,
+    "occlusionDetectTriggers": false,
+    "spotAngle": 1.0,
+    "innerSpotAngle": 0.0,
+    "lightColor": [
+        0.0,
+        0.9245283007621765,
+        0.22183918952941895,
+        1.0
+    ],
+    "enableMask": false,
+    "maskIntensity": 1.0,
+    "maskTexturePath": "Assets/ThirdParty/Knife/PRO Effects Sci fi FX/Textures/9.png"
+}
