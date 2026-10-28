@@ -987,9 +987,9 @@ public class ResourceBoxRecoveryItem
             //   改用反射翻 EditorStyles 静态字段 + GUISkin.m_Styles 内部数组，
             //   命中后克隆样式（保留 9-slice border，不被压缩）。
             //   全部拿不到时退到 IconContent + 手动 border(4)，最后兜底 helpBox。
-            var dropBg = TryFindBuiltinStyle("StateMachineEditor.Background");
+            var dropBg = TryFindBuiltinStyle("sv_icon_name0");
             if (dropBg == null) {
-                var dropIcon = EditorGUIUtility.IconContent("StateMachineEditor.Background");
+                var dropIcon = EditorGUIUtility.IconContent("sv_icon_name0");
                 dropBg = new GUIStyle();
                 if (dropIcon != null && dropIcon.image is Texture2D dropTex) {
                     dropBg.normal.background = dropTex;
@@ -1001,7 +1001,7 @@ public class ResourceBoxRecoveryItem
             dropBg.alignment = TextAnchor.MiddleCenter;
             dropBg.fontSize = 12;
             // ★深色状态机背景上的文字需要强制白色，否则默认 textColor 在深底上几乎看不见
-            dropBg.normal.textColor = new Color(0.7f, 0.4f, 0.7f);
+            dropBg.normal.textColor = new Color(0.5f, 0.23f, 0.47f);
             // 绘制带状态机背景的拖拽区域
             GUI.Box(dropArea, "拖拽区域：从 Project 或场景 Hierarchy 中拖入资源箱 ↓", dropBg);
 
@@ -1068,19 +1068,19 @@ public class ResourceBoxRecoveryItem
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField($"资源箱: ( {_resourceBox.Count} )", style.subheading, GUILayout.Height(24));
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("Lighting").image, "添加当前场景主光"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("Profiler.Rendering").image, "添加当前场景主光"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
             {
                 AddCurrentSceneMainLightToResourceBox();
-            }
-            // 添加项目中渲染管线配置文件按钮-渲染管线配置文件图标
-            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_ScriptableObject Icon").image, "添加项目中渲染管线配置文件"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
-            {
-                AddAllProjectRenderPipelineAssetsToResourceBox();
             }
             // 清除资源箱按钮（带确认）
             if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("UnityLogo").image, "添加项目中所有场景"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
             {
                 AddAllProjectScenesToResourceBox();
+            }
+            // 添加项目中渲染管线配置文件按钮-渲染管线配置文件图标
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_ScriptableObject Icon").image, "添加项目中渲染管线配置文件"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
+            {
+                AddAllProjectRenderPipelineAssetsToResourceBox();
             }
             GUILayout.Space(10);
             if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_CacheServerDisconnected").image, "清空资源箱中所有内容！"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
