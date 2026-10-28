@@ -1,0 +1,1017 @@
+// PBR_Mobile1.0    PBR基本属性，自发光开关（贴图数量：4）
+// PBR_Mobile1.2    添加AO贴图通道及控制参数；添加Compute Buffer多点光源支持
+// PBR_Mobile2.0    添加Compute Buffer多点光源支持
+// PBR_Mobile2.0.1    添加基础反射功能，支持反射贴图和菲涅尔效果
+// PBR_Mobile2.0.2    性能优化版本 - 减少变体、优化采样、简化计算
+// PBR_Mobile2.0.3   编辑器模式实时更新优化 - 增强Compute Buffer系统与编辑器集成，支持非运行模式下点光效果预览
+// PBR_Mobile2.1.4   将光滑度控制改为粗糙度控制，更符合PBR标准工作流
+// PBR_Mobile2.1.5   修复自发光被AO影响问题
+// PBR_Mobile2.1.6   添加法线贴图Debug
+// PBR_Mobile2.1.7   高光受阴影影响修正；修复pow除零警告
+// PBR_Mobile2.1.8   优化高光不受BaseColor影响
+// PBR_Mobile3.0    添加顶点阴影选项（进一步优化性能），剔除自身阴影的背面（优化效果）；修复自阴影算法；自发光颜色饱和度控制
+// PBR_Mobile3.1    统一管理所有纹理采样结果；优化高光计算性能；优化自身阴影
+// PBR_Mobile3.2    支持烘焙，添加Brightness参数
+// PBR_Mobile3.3    校正基础光照；优化烘焙亮度
+// PBR_Mobile3.4    添加烘焙虚拟高光（基于主光源方向，配合脚本快速匹配灯光方向）；简化阴影与深度Pass（减少变体）
+// PBR_Mobile4.0    优化金属度算法（包括LIGHTMAP_ON、CalculateCustomPointLights）；优化反射融入固有色；修复自定义点光[loop]
+// PBR_Mobile4.1    添加禁用环境光选项
+// PBR_Mobile4.2 取消反射颜色
+// PBR_Mobile5.0 添加SpotLight支持
+// PBR_Mobile5.1 添加聚光灯纹理彩色光环
+// PBR_Mobile5.2 添加UI脚本控制
+// PBR_Mobile5.3 优化自身阴影平滑度，减少阶梯状硬边
+// PBR_Mobile5.4 性能优化 - 预计算PBR属性，消除重复计算，优化光源循环
+// PBR_Mobile5.5 完善自身阴影（使用Lambert光照作为遮罩来平滑阴影锯齿）
+// PBR_Mobile5.6 修复反射被烘焙光照覆盖问题
+// PBR_Mobile5.7 烘焙投影支持，使用Unity标准的Subtractive模式方法；优化偏移明暗交界线减少ShadowMap投影噪点
+// PBR_Mobile5.8 优化高光亮度，移除specularColor削减；烘焙高光受实时阴影影响(暂时还原高光衰减)
+// PBR_Mobile5.9 优化高光算法，高光随模型边缘形状挤压还原真实高光效果；增加金属反射对比
+// PBR_Mobile6.0 完善所有效果，继承原始表现效果
+// PBR_Mobile6.1 添加变色通道控制，MRA贴图的a通道作为基础颜色蒙版
+// PBR_Mobile6.2 支持烘焙模式Shadowmask模式，修复该模式时使用顶点阴影时报错
+// PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
+// PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）；Subtractive混合光照改用URP标准算法
+// PBR_Mobile6.5 P0性能优化：MRA贴图条件采样（仅_USEMSAMAP开启时采样）、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关（按需裁剪烘焙高光与间接高光计算）
+// PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
+// PBR_Mobile7.2 添加“禁用主光强度”选项，勾选时使用自定义亮度值控制主光亮度（直接乘法，避免归一化在场景光强/颜色变化时失控）。
+// PBR_Mobile7.3 跨场景保护：新增全局安全位 _CustomLightSystemActive（由 ComputeBufferLightManager 独占写入），
+//                  缓冲区释放时同步关闭，避免材质残留 _USEPOINTLIGHT/_USESPOTLIGHT 关键字时采样已销毁的
+//                  StructuredBuffer 产生 NaN，导致材质变黑。
+// PBR_Mobile7.4 禁用Compute Buffer自定义灯光系统。
+
+Shader "Custom/PBR_Mobile"
+{
+    Properties
+    {
+        [Toggle(_DISABLEENVIRONMENT)] _DisableEnvironment ("Disable Environment", Float) = 0
+        [Toggle(_DISABLELIGHTCOLOR)] _DisableLightColor ("Disable LightColor", Float) = 0
+        [Toggle(_DISABLELIGHTINTENSITY)] _DisableLightIntensity ("Disable LightIntensity", Float) = 0
+        _LightIntensity ("Light Intensity", Range(0, 8)) = 1.0
+        [Toggle(_USEVERSHADOW)] _UseVerShadow ("Use Vertex Shadow", Float) = 0
+        [Toggle(_USESOFTSHADOW)] _UseSoftShadow ("Use Optimized Soft Shadow", Float) = 1
+        [Header(1  (Base Properties))]
+        [Space(5)]
+        [MainColor] _BaseColor ("Base Color", Color) = (1,1,1,1)
+        [MainTexture] _BaseMap ("Albedo (RGB)", 2D) = "white" {}
+        
+        [Header(2  (Metallic Roughness AO))]
+        [Space(5)]
+        _Metallic ("Metallic", Range(0, 1)) = 0.0
+        _Roughness ("Roughness", Range(0, 2)) = 0.5
+        _SpecularScale ("Specular Scale", Range(0.1, 5)) = 2
+        _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
+        _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.4
+        _Softness ("Shadow Softness（纹素数）", Range(0, 4)) = 1.5
+        _Brightness ("Brightness", Range(0.5, 20)) = 1.0
+        _BakedSpecularDirection ("Baked Specular Direction", Vector) = (0, 0, 1)
+        [Toggle(_USEMSAMAP)] _UseMsaMap ("Use Metallic Roughness Map", Float) = 0
+        _MetallicGlossMap ("Metallic(R) Roughness(G) AO(B)", 2D) = "white" {}
+        [Toggle(_USEAOMAP)] _UseAOMap ("Use AO(B) Channel", Float) = 0
+        _OcclusionContrast  ("AO Contrast", Range(0, 2)) = 0.8
+        _OcclusionStrength  ("AO Strength", Range(0, 1)) = 0.5
+        [Toggle(_PREVIEWAO)] _PreviewAOMap ("Preview AO(B) Channel", Float) = 0
+
+        // [Header(........................................................)]
+        // [Space(5)]
+        [Toggle(_NORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 0
+        [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
+        _BumpScale ("Normal Scale", Range(0.001, 3)) = 1.0
+        [Toggle(_FILPG)] _FilpG("Filp Green Channel", Float) = 0
+        [Toggle(_DEBUGNORMAL)] _DebugNormal("Debug Normal Map", Float) = 0
+        
+        // [Header(........................................................)]
+        // [Space(5)]
+        [Toggle(_USEEMISSIONMAP)] _UseEmissionMap("Use Emission Map", Float) = 0
+        [HDR]_EmissionColor ("Emission Color", Color) = (1,1,1,1)
+        _EmissionMap ("Emission Map", 2D) = "white" {}
+        _EmissionScale  ("Emission Scale", Range(0, 3)) = 1.0
+        [Toggle(_INVERTEMISMAP)] _InvertEmisMap("Invert Emission Map", Float) = 0   
+        
+        // [Header(........................................................)]
+        // [Space(5)]
+        [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection", Float) = 0
+        [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
+        _ReflectionStrength ("Reflection Strength", Range(0, 10)) = 2.0
+        _ReflectionBlur ("Reflection Blur", Range(0, 6)) = 0.0
+        [Space(5)]
+        _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
+        _ReflectionFresnelBias ("Fresnel Bias", Range(-0.4, 1)) = 0.3
+        
+        [Header(........................................................)]
+        [Space(5)]
+        [HideInInspector]_Cutoff("Alpha Cutoff", Range(0.001, 1.0)) = 0.5
+        [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
+
+        [Header(8  (Performance Toggles))]
+        [Space(5)]
+        [Toggle(_DISABLEBAKEDSPECULAR)] _DisableBakedSpecular ("Disable Baked Specular (烘焙高光)", Float) = 1
+        [Toggle(_DISABLEINDIRECTSPECULAR)] _DisableIndirectSpecular ("Disable Indirect Specular (间接高光近似)", Float) = 1
+        
+        [HideInInspector][NoScaleOffset]unity_Lightmaps("unity_Lightmaps", 2DArray) = "" {}
+        [HideInInspector][NoScaleOffset]unity_LightmapsInd("unity_LightmapsInd", 2DArray) = "" {}
+        [HideInInspector][NoScaleOffset]unity_ShadowMasks("unity_ShadowMasks", 2DArray) = "" {}
+    }
+
+    SubShader
+    {
+        Tags
+        {
+            "Queue" = "Geometry"
+            "RenderType" = "Opaque"
+            "DisableBatching" = "False"
+            "RenderPipeline" = "UniversalPipeline"
+            "UniversalMaterialType" = "Unlit"
+            "ShaderGraphTargetId" = "UniversalUnlitSubTarget"
+        }
+        
+        Pass
+        {
+            Name "Universal Forward"
+            Tags
+            {
+                "Queue" = "Geometry"
+                "RenderType" = "Opaque"
+                "DisableBatching" = "False"
+                "RenderPipeline" = "UniversalPipeline"
+                "UniversalMaterialType" = "Unlit"
+                "ShaderGraphTargetId" = "UniversalUnlitSubTarget"
+            }
+            
+            // 深度写入和测试（修复阴影遮挡问题的关键）
+            // ZWrite On
+            // ZTest LEqual
+            
+            Cull[_Cull]
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            
+            #pragma shader_feature_local _USEEMISSIONMAP
+            #pragma shader_feature_local _INVERTEMISMAP
+            #pragma shader_feature_local _FILPG
+            #pragma shader_feature_local _USEVERSHADOW
+            #pragma shader_feature_local _USESOFTSHADOW
+            #pragma shader_feature_local _USEMSAMAP
+            #pragma shader_feature_local _USEAOMAP
+            #pragma shader_feature_local _NORMALMAP
+            #pragma shader_feature_local _USEREFLECTION
+            #pragma shader_feature_local _PREVIEWAO
+            #pragma shader_feature_local _DISABLEENVIRONMENT
+            #pragma shader_feature_local _DISABLELIGHTCOLOR
+            #pragma shader_feature_local _DISABLELIGHTINTENSITY
+
+            #pragma shader_feature_local _DEBUGNORMAL
+            #pragma shader_feature_local _DISABLEBAKEDSPECULAR
+            #pragma shader_feature_local _DISABLEINDIRECTSPECULAR
+            
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile_fog
+            
+            #pragma multi_compile _ LIGHTMAP_ON
+            #pragma multi_compile _ DIRLIGHTMAP_COMBINED
+            #pragma multi_compile _ LIGHTMAP_SHADOW_MIXING
+            #pragma multi_compile _ SHADOWS_SHADOWMASK
+            
+            #ifdef SHADER_API_MOBILE
+                #define USE_FAST_MATH 1
+            #else
+                #define USE_FAST_MATH 0
+            #endif
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
+            TEXTURE2D(_BumpMap);
+            SAMPLER(sampler_BumpMap);
+            TEXTURE2D(_MetallicGlossMap);
+            SAMPLER(sampler_MetallicGlossMap);
+            TEXTURE2D(_EmissionMap);
+            SAMPLER(sampler_EmissionMap);
+            TEXTURE2D(_SphericalReflectionMap);
+            SAMPLER(sampler_SphericalReflectionMap);
+
+            float4 _MainLightShadowmapTexture_TexelSize;
+
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
+                half4 _BaseColor;
+                half _Metallic;
+                half _Roughness;
+                half _SpecularScale;
+                half _ShadowScale;
+                float _Softness;
+                half _HalfLambert;
+                half _Brightness;
+                half _BumpScale;
+                half _OcclusionContrast;
+                half _OcclusionStrength;
+                half _EmissionScale;
+                half4 _EmissionColor;
+                half _LightIntensity;
+
+                float3 _BakedSpecularDirection;
+                
+                float _ReflectionStrength;
+                float _ReflectionBlur;
+                float _ReflectionFresnelPower;
+                float _ReflectionFresnelBias;
+            CBUFFER_END
+
+            struct Attributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+                float4 tangentOS : TANGENT;
+                float2 uv : TEXCOORD0;
+                float2 lightmapUV : TEXCOORD1;
+            };
+
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
+                float2 uv : TEXCOORD0;
+                float4 positionWS_shadow : TEXCOORD1; // xyz = positionWS, w = shadowAttenuation (or 1.0)
+                float4 normalWS_ndotl : TEXCOORD2;    // xyz = normalWS, w = NdotL (or 0.0)
+                float4 viewDirWS_fog : TEXCOORD3;     // xyz = viewDirWS, w = fogFactor
+                
+                #if defined(_NORMALMAP)
+                float4 tangentWS : TEXCOORD4; 
+                #endif
+                
+                DECLARE_LIGHTMAP_OR_SH(lightmapUV, vertexSH, 5);
+            };
+
+            #if USE_FAST_MATH
+            half fastPow(half x, half n) {
+                return exp2(n * log2(x)); 
+            }
+            #else
+            #define fastPow pow
+            #endif
+
+            float2 fastSphericalUV(float3 reflectionVector) {
+                reflectionVector = normalize(reflectionVector);
+                
+                return float2(
+                    reflectionVector.x / 4.01 + 0.5,  
+                    reflectionVector.y / 4.01 + 0.5   
+                );
+            }
+
+            half fastAttenuation(float distance, float range) {
+                half d = saturate(distance / range);
+                return 1.0 - d * d; 
+            }
+
+            half3 AdjustSaturation(half3 color, half saturation) {
+                
+                half luminance = dot(color, half3(0.299, 0.587, 0.114));
+                
+                return lerp(half3(luminance, luminance, luminance), color, saturation);
+            }
+
+            half3 AdjustContrast(half3 color, half contrast) {
+                
+                return saturate((color - 0.5) * contrast + 0.5);
+            }
+
+            float3 SampleSphericalReflection(float3 reflectionVector, float blur)
+            {
+                float2 uv = fastSphericalUV(reflectionVector);
+                
+                float3 reflectionColor = SAMPLE_TEXTURE2D_LOD(_SphericalReflectionMap, sampler_SphericalReflectionMap, uv, blur).rgb;
+                return reflectionColor;
+            }
+
+            float CalculateFresnel(float3 normalWS, float3 viewDirWS, float power, float bias)
+            {
+                float fresnel = saturate(dot(normalWS, viewDirWS));
+                fresnel = saturate(bias + (1.0 - bias) * fastPow(1.0 - fresnel, power));
+                return fresnel;
+            }
+
+            float3 CalculateSphericalReflection(float3 normalWS, float3 viewDirWS, float metallic, float roughness, float2 uv, half3 mainLightColor)
+            {
+                
+                float3 reflectionVector = reflect(-viewDirWS, normalWS);
+                
+                float3 reflectionColor = SampleSphericalReflection(reflectionVector, _ReflectionBlur);
+                
+                // 增加反射贴图的对比强度
+                // reflectionColor *= reflectionColor;
+                
+                float fresnel = CalculateFresnel(normalWS, viewDirWS, _ReflectionFresnelPower, _ReflectionFresnelBias);
+                
+                float smoothness = 1.0 - roughness; 
+                float reflectionIntensity = metallic * smoothness * fresnel;
+                
+                // 减少主光源亮度对反射的影响，在烘焙场景中也能正常显示反射
+                half mainLightLuminance = dot(mainLightColor, half3(0.299, 0.587, 0.114));
+                half lightInfluence = saturate(mainLightLuminance * 0.5 + 0.5); // 降低影响，确保最小值为0.5
+                reflectionIntensity *= lightInfluence;
+                
+                return reflectionColor*_ReflectionStrength * reflectionIntensity;
+            }
+
+            half3 SimpleDiffuse(half3 normalWS, half3 lightDir, half3 lightColor)
+            {
+                half NdotL = saturate(dot(normalWS, lightDir));
+                
+                // 标准Half Lambert效果
+                half halfLambertEffect = NdotL * (1.0 - _HalfLambert) + _HalfLambert;
+                
+                return lightColor * halfLambertEffect;
+            }
+
+            struct MaterialProperties
+            {
+                half3 albedo;           
+                half4 baseColor;        
+                half4 mraSample;        
+                half metallic;          
+                half roughness;         
+                half aoValue;
+                half3 normalTS;         
+                half3 normalWS;         
+                half3 emissionMap;      
+                float2 uv;
+                
+                // 预计算的PBR属性（性能优化）
+                half3 diffuseColor;     // 预计算的漫反射颜色
+                half3 specularColor;    // 预计算的高光颜色
+                half smoothness;        // 预计算的光滑度
+                half shininess;         // 预计算的高光指数
+                half oneMinusMetallic;  // 预计算的 1-metallic
+            };
+
+            MaterialProperties InitMaterialProperties(float2 uv, half3 worldNormal)
+            {
+                MaterialProperties mat;
+                mat.uv = uv;
+                
+                mat.baseColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv);
+                #ifdef _USEMSAMAP
+                    // 仅在使用 MRA 贴图时才采样，避免不必要的带宽/缓存开销
+                    mat.mraSample = SAMPLE_TEXTURE2D(_MetallicGlossMap, sampler_MetallicGlossMap, uv);
+                #else
+                    // 未开启 MRA 贴图时，蒙版通道 a 视为 1（即使用 _BaseColor 调色）
+                    mat.mraSample = half4(1, 1, 1, 1);
+                #endif
+                mat.albedo = lerp(mat.baseColor.rgb, mat.baseColor.rgb * _BaseColor.rgb, mat.mraSample.a);
+                
+                mat.metallic = _Metallic;
+                mat.roughness = _Roughness;
+                mat.aoValue = 1.0;
+                
+                #ifdef _USEMSAMAP
+                    mat.metallic *= mat.mraSample.r;
+                    mat.roughness *= mat.mraSample.g;
+                #endif
+
+                #if defined(_USEMSAMAP) && defined(_USEAOMAP)
+                    mat.aoValue = mat.mraSample.b;
+                #endif
+
+                mat.normalWS = worldNormal;
+                mat.normalTS = half3(0, 0, 1);
+                
+                #ifdef _USEEMISSIONMAP
+                    mat.emissionMap = SAMPLE_TEXTURE2D(_EmissionMap, sampler_EmissionMap, uv).rgb;
+                #else
+                    mat.emissionMap = half3(0, 0, 0);
+                #endif
+                
+                // 预计算PBR属性（性能优化 - 避免在每个光源中重复计算）
+                mat.oneMinusMetallic = 1.0 - mat.metallic;
+                mat.smoothness = 1.0 - mat.roughness;
+                
+                // 预计算能量守恒的漫反射和高光颜色
+                half oneMinusDielectricSpec = 0.96;
+                mat.diffuseColor = mat.albedo * oneMinusDielectricSpec * mat.oneMinusMetallic;
+                
+                // 优化高光基础能量：提高非金属材质的基础高光强度
+                half dielectricSpecular = 0.12; // 从0.04提升到0.12，增强非金属高光
+                half3 baseSpecularColor = lerp(dielectricSpecular, mat.albedo, mat.metallic);
+                
+                // 使用粗糙度调制高光强度，粗糙度低时高光更强
+                // 降低粗糙度的影响，避免过度增强
+                half roughnessFactor = 1.0 - mat.roughness * 0.3; // 从0.5降低到0.3
+                baseSpecularColor *= roughnessFactor;
+                
+                // 金属度加成：金属材质获得额外的高光强度提升
+                // 使用更温和的曲线，避免高金属度时过曝
+                half metallicBoost = 1.0 + mat.metallic * mat.metallic * 0.8; // 使用平方曲线，最高1.8倍
+                baseSpecularColor *= metallicBoost;
+                
+                // 确保最小高光值，避免完全消失
+                half minSpecular = lerp(0.08, 0.15, mat.metallic); // 降低金属最大最小值
+                mat.specularColor = max(baseSpecularColor, minSpecular);
+                
+                // 预计算高光指数（避免在每个光源中重复pow运算）
+                half smoothnessCubed = mat.smoothness * mat.smoothness * mat.smoothness;
+                mat.shininess = mad(smoothnessCubed, 128.0, 2.0);
+                
+                return mat;
+            }
+
+            void ApplyNormalMap(inout MaterialProperties mat, Varyings input)
+            {
+                #if defined(_NORMALMAP)
+                    half4 normalSample = SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, mat.uv);
+                    #ifdef _FILPG
+                        normalSample.g = 1 - normalSample.g;
+                    #endif
+                    mat.normalTS = UnpackNormal(normalSample);
+                    mat.normalTS.xy *= _BumpScale;
+                    mat.normalTS = normalize(mat.normalTS);
+                    
+                    float3 tangentWS = normalize(input.tangentWS.xyz);
+                    float3 bitangentWS = cross(mat.normalWS, tangentWS) * input.tangentWS.w;
+                    float3x3 TBN = float3x3(tangentWS, bitangentWS, mat.normalWS);
+                    mat.normalWS = normalize(mul(mat.normalTS, TBN));
+                #endif
+            }
+
+            half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 lightColor, half shadowAttenuation)
+            {
+                // half3 halfDir = normalize(lightDir + viewDir);
+                // 计算光线的反射向量
+                half3 reflectDir = reflect(-lightDir, normalWS);
+                // 计算反射向量与视线方向的点积
+                half RdotV = saturate(dot(reflectDir, viewDir));
+                // half NdotH = saturate(dot(reflectDir, halfDir));
+                
+                half specular = fastPow(max(RdotV, 0.001), shininess) * smoothness;
+                
+                return lightColor * specular * shadowAttenuation * 2.0; 
+            }
+            
+            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic, half shadowAttenuation)
+            {
+                
+                half3 finalLightDir = lightDir;
+                if (length(_BakedSpecularDirection) > 0.001)
+                {
+                    
+                    finalLightDir = normalize(_BakedSpecularDirection);
+                }
+                
+                // half3 halfDir = normalize(finalLightDir + viewDir);
+                // 计算光线的反射向量
+                half3 reflectDir = reflect(-finalLightDir, normalWS);
+                half NdotH = saturate(dot(reflectDir, viewDir));
+                
+                half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
+                
+                half metallicFactor = metallic * metallic; 
+                half3 adjustedBakedGI = lerp(bakedGI, half3(1, 1, 1), metallicFactor);
+                
+                // 烘焙高光也应该受实时阴影影响
+                return adjustedBakedGI * specular * _SpecularScale * shadowAttenuation;
+            }
+
+            Varyings vert(Attributes input)
+            {
+                Varyings output;
+                
+                VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);
+                VertexNormalInputs normalInput = GetVertexNormalInputs(input.normalOS, input.tangentOS);
+                
+                output.positionCS = vertexInput.positionCS;
+                output.positionWS_shadow = float4(vertexInput.positionWS, 1.0);
+                output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
+                output.normalWS_ndotl = float4(normalInput.normalWS, 0.0);
+                output.viewDirWS_fog = float4(GetCameraPositionWS() - vertexInput.positionWS, ComputeFogFactor(vertexInput.positionCS.z));
+                #ifdef _USEVERSHADOW
+                    half NdotL = 0;
+                    half shadowAttenuation = 1.0;
+                    
+                    if (_ShadowScale < 0.88)
+                    {
+                        float4 shadowCoord = TransformWorldToShadowCoord(output.positionWS_shadow.xyz);
+                        shadowCoord.w = max(shadowCoord.w, 0.001);
+                        Light mainLight = GetMainLight(shadowCoord);
+                        
+                        // Shadowmask 不在 vert 中采样（vs_4_0 顶点纹理采样指令受限）
+                        // 改为在 frag 中融合 Shadowmask 结果
+                        
+                        NdotL = dot(output.normalWS_ndotl.xyz, mainLight.direction);
+                        half baseShadow = mainLight.shadowAttenuation;
+                        
+                        half lambertMask = saturate(NdotL * 0.5 + 0.5);
+                        half shadowEdge = saturate((baseShadow - 0.3) / 0.4);
+                        half smoothedShadow = lerp(baseShadow, lambertMask, shadowEdge * (1.0 - shadowEdge) * shadowEdge);
+                        
+                        shadowAttenuation = lerp(smoothedShadow, 1.0, _ShadowScale);
+                        
+                        half backfaceRange = lerp(0.0, 1.0, lambertMask);
+                        half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, NdotL);
+                        shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
+                    }
+                    else
+                    {
+                        Light mainLight = GetMainLight();
+                        NdotL = dot(output.normalWS_ndotl.xyz, mainLight.direction);
+                    }
+                    
+                    output.positionWS_shadow.w = shadowAttenuation;
+                    output.normalWS_ndotl.w = NdotL;
+                #endif
+                
+                #if defined(_NORMALMAP)
+                output.tangentWS = float4(normalInput.tangentWS, input.tangentOS.w);
+                #endif
+                
+                OUTPUT_LIGHTMAP_UV(input.lightmapUV, unity_LightmapST, output.lightmapUV);
+                OUTPUT_SH(output.normalWS_ndotl.xyz, output.vertexSH);
+                
+                return output;
+            }
+
+            half4 frag(Varyings input) : SV_Target
+            {
+                
+                MaterialProperties mat = InitMaterialProperties(input.uv, normalize(input.normalWS_ndotl.xyz));
+                
+                ApplyNormalMap(mat, input);
+                
+                half3 viewDirWS = normalize(input.viewDirWS_fog.xyz);
+
+                half3 diffuse = 0;
+                half3 specular = 0;
+                half shadowAttenuation = 1;
+                half3 lightColor = 0;
+                half3 lightDir = 0;
+                
+#ifdef _USEVERSHADOW
+                // 顶点阴影模式：跳过 shadow map 采样，直接使用顶点预计算阴影
+                Light mainLight = GetMainLight();
+                lightDir = mainLight.direction;
+                
+                if (_ShadowScale < 0.88)
+                {
+                    half vertShadow = input.positionWS_shadow.w;
+                    #if defined(SHADOWS_SHADOWMASK) && defined(LIGHTMAP_ON)
+                        // Shadowmask 模式：取顶点阴影和烘焙遮罩的较暗值
+                        half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
+                        shadowAttenuation = min(vertShadow, shadowMask.r);
+                    #else
+                        shadowAttenuation = vertShadow;
+                    #endif
+                }
+#else
+                // 像素阴影模式
+#ifdef _USESOFTSHADOW
+                // ===== 软阴影 =====
+                // 算法：UV 空间等边三角形采样（1 中心 + 3 点 120° 均布），仅 1 次 TransformWorldToShadowCoord
+                // 固定权重 2:1:1:1 ÷ 5 → 中心 40%，周边各 20%，羽化更强、归一化正确
+                Light mainLight = GetMainLight();
+                lightDir = mainLight.direction;
+                {
+                    // 世界坐标 → ShadowCoord（仅 1 次，4 层采样共享）
+                    float4 sc = TransformWorldToShadowCoord(input.positionWS_shadow.xyz);
+                    float2 texelSize = _MainLightShadowmapTexture_TexelSize.xy;
+                    float radius = _Softness * texelSize.x;    // 采样半径（纹素单位）
+
+                    // 采样 1：中心点（权重 2）
+                    float shadow = SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare, sc) * 2.0;
+                    // 采样 2：0°（右侧，权重 1）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(radius, 0), sc.zw));
+                    // 采样 3：120°（左上，cos120°=-0.5, sin120°≈0.866，权重 1）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(-0.5 * radius, 0.866 * radius), sc.zw));
+                    // 采样 4：240°（左下，cos240°=-0.5, sin240°≈-0.866，权重 1）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(-0.5 * radius, -0.866 * radius), sc.zw));
+
+                    // 超出阴影贴图范围（sc.z <= 0）时维持无阴影状态
+                    half inRange = (sc.z > 0.0) ? 1.0 : 0.0;
+                    mainLight.shadowAttenuation = lerp(1.0, shadow / 5.0, inRange);
+                }
+#else
+                float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS_shadow.xyz);
+                Light mainLight = GetMainLight(shadowCoord);
+                lightDir = mainLight.direction;
+#endif
+                
+                // ShadowMask：取软阴影和烘焙遮罩的较暗值
+                #if defined(LIGHTMAP_ON) && defined(SHADOWS_SHADOWMASK)
+                    half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
+                    mainLight.shadowAttenuation = min(mainLight.shadowAttenuation, shadowMask.r);
+                #endif
+                
+                    if (_ShadowScale < 0.88)
+                    {
+                        half baseShadow = mainLight.shadowAttenuation;
+                        half pixelNdotL = dot(mat.normalWS, lightDir);
+                        
+                        // 方法：通过偏移pixelNdotL来调整明暗交界线
+                        // 正值偏移 → 交界线向暗部移动（亮部扩大）
+                        // 负值偏移 → 交界线向亮部移动（暗部扩大）
+                        pixelNdotL = pixelNdotL - 0.1;  // 向白色部分偏移（亮部缩小）
+                        
+                        // 使用Lambert光照作为遮罩来平滑阴影锯齿
+                        half lambertMask = saturate(pixelNdotL * 0.5 + 0.5);
+                        
+                        // 使用pow让明暗交界线向白色部分偏移（暗部收缩，亮部扩大）
+                        // 指数越大，交界线越向暗部移动
+                        lambertMask = fastPow(lambertMask, 2);
+                        
+                        // 检测阴影边界并应用Lambert遮罩平滑
+                        half shadowEdge = saturate((baseShadow - 0.3) / 0.4);
+                        half smoothedShadow = lerp(baseShadow, lambertMask, shadowEdge * (1.0 - shadowEdge) * shadowEdge);
+                        
+                        // 应用阴影强度控制
+                        shadowAttenuation = lerp(smoothedShadow, 1.0, _ShadowScale);
+                        
+                        // 背面剔除优化 - 使用与Half Lambert协调的范围
+                        half backfaceRange = lerp(0.0, 1.0, lambertMask);
+                        half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, pixelNdotL);
+                        shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
+                    }
+                    // 当 _ShadowScale >= 0.88 时，shadowAttenuation 保持为 1.0（已在上面初始化）
+#endif
+                
+                #ifndef _DISABLEENVIRONMENT
+                // _DISABLELIGHTINTENSITY：用 _LightIntensity 替换主光强度（替换 color × intensity 中的 intensity 分量）
+                // - 仅启用 _DISABLELIGHTINTENSITY（未启用 _DISABLELIGHTCOLOR）：保留 mainLight.color 颜色方向，强度替换为 _LightIntensity
+                // - 同时启用 _DISABLELIGHTINTENSITY 和 _DISABLELIGHTCOLOR：漫反射去色为灰度（取 _LightIntensity 强度），高光也用纯灰度
+                // 注意：主光 Intensity=0（mainLight.color≈0）时颜色方向无法提取（max≈0），光强最终为 0，这是物理约束无法避免。
+                #ifdef _DISABLELIGHTINTENSITY
+                half _origMainBright = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
+                half3 _mainColorDir = _origMainBright > 0.0001 ? mainLight.color / _origMainBright : half3(0, 0, 0);
+                half3 _mainLightEffective = _mainColorDir * _LightIntensity;
+                #ifdef _DISABLELIGHTCOLOR
+                // 漫反射去色仅保留 _LightIntensity 强度；高光保留颜色方向（影响金属反射的色相）
+                half _grayScale = max(_mainLightEffective.r, max(_mainLightEffective.g, _mainLightEffective.b));
+                lightColor = half3(_grayScale, _grayScale, _grayScale) * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 specularLightColor1 = _mainLightEffective * mainLight.distanceAttenuation * shadowAttenuation;
+                #else
+                // 保留主光颜色方向 + _LightIntensity 强度
+                lightColor = _mainLightEffective * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 specularLightColor1 = lightColor;
+                #endif
+                #else
+                // 标准路径：_DISABLELIGHTCOLOR 把漫反射灰度化、高光保留原色（让金属反射保留主光颜色）
+                #ifdef _DISABLELIGHTCOLOR
+                half lightIntensity1 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
+                lightColor = half3(lightIntensity1, lightIntensity1, lightIntensity1) * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 specularLightColor1 = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
+                #else
+                lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 specularLightColor1 = lightColor;
+                #endif
+                #endif
+                diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
+                specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, specularLightColor1, shadowAttenuation);
+                
+                // 计算环境光（烘焙光照或球谐光照）
+                half3 bakedGI = 0;
+                
+                #ifdef LIGHTMAP_ON
+                    // 采样烘焙光照
+                    bakedGI = SampleLightmap(input.lightmapUV, mat.normalWS);
+                #else
+                    // 没有lightmap，使用球谐光照
+                    bakedGI = SampleSH(mat.normalWS);
+                #endif
+                
+                // Subtractive模式：使用URP标准方法从lightmap中减去主光贡献
+                // _DISABLELIGHTINTENSITY 时：用替换后的 _mainLightEffective 替代 mainLight.color，保持
+                //   与直接光照通道一致；否则当主光被禁用时 lambert=0 不会减任何东西，符合"排除主光"语义。
+                #if defined(LIGHTMAP_ON) && defined(LIGHTMAP_SHADOW_MIXING) && !defined(SHADOWS_SHADOWMASK)
+                    half contributionTerm = saturate(dot(lightDir, mat.normalWS));
+                    #ifdef _DISABLELIGHTINTENSITY
+                    half3 lambert = _mainLightEffective * contributionTerm;
+                    half _effectiveShadowAtt = shadowAttenuation;
+                    #else
+                    half3 lambert = mainLight.color * contributionTerm;
+                    half _effectiveShadowAtt = mainLight.shadowAttenuation;
+                    #endif
+                    half3 estimatedLightContribution = lambert * (1.0 - _effectiveShadowAtt);
+                    half3 subtractedLightmap = bakedGI - estimatedLightContribution;
+                    half3 realtimeShadow = max(subtractedLightmap, unity_ShadowColor.xyz);
+                    realtimeShadow = lerp(bakedGI, realtimeShadow, GetMainLightShadowStrength());
+                    bakedGI = min(bakedGI, realtimeShadow);
+                #endif
+                
+                // 间接漫反射：bakedGI只作用于漫反射通道（与URP Lit一致的能量分配）
+                half3 ambient = bakedGI * mat.diffuseColor;
+                #ifndef _DISABLEINDIRECTSPECULAR
+                // 间接高光近似：金属材质从bakedGI获取间接高光（轻量近似，不采样反射探针）
+                half NoV = saturate(dot(mat.normalWS, viewDirWS));
+                half fresnelTerm = fastPow(1.0 - NoV, 4.0);
+                half3 indirectSpecular = bakedGI * mat.specularColor * (fresnelTerm * mat.smoothness + mat.metallic * 0.15);
+                ambient += indirectSpecular;
+                #endif
+                
+                // 合成最终颜色：环境光 + 实时光照
+                half3 finalColor = ambient + mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                
+                // 烘焙高光（保留原来的效果，但不削减亮度，且受阴影影响）
+                half3 bakedSpecular = 0;
+                #if defined(LIGHTMAP_ON) && !defined(_DISABLEBAKEDSPECULAR)
+                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic, shadowAttenuation);
+                    finalColor += mat.specularColor * bakedSpecular;
+                #endif
+                #else
+                // 禁用环境光时，只使用实时光照
+                // _DISABLELIGHTINTENSITY：用 _LightIntensity 替换主光强度（保留颜色方向除非同时 _DISABLELIGHTCOLOR）
+                #ifdef _DISABLELIGHTINTENSITY
+                half _origMainBright2 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
+                half3 _mainColorDir2 = _origMainBright2 > 0.0001 ? mainLight.color / _origMainBright2 : half3(0, 0, 0);
+                half3 _mainLightEffective2 = _mainColorDir2 * _LightIntensity;
+                #ifdef _DISABLELIGHTCOLOR
+                half _grayScale2 = max(_mainLightEffective2.r, max(_mainLightEffective2.g, _mainLightEffective2.b));
+                lightColor = half3(_grayScale2, _grayScale2, _grayScale2) * mainLight.distanceAttenuation * shadowAttenuation;
+                #else
+                lightColor = _mainLightEffective2 * mainLight.distanceAttenuation * shadowAttenuation;
+                #endif
+                #else
+                #ifdef _DISABLELIGHTCOLOR
+                half lightIntensity2 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
+                lightColor = half3(lightIntensity2, lightIntensity2, lightIntensity2) * mainLight.distanceAttenuation * shadowAttenuation;
+                #else
+                lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
+                #endif
+                #endif
+                diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
+                specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
+                
+                half3 finalColor = mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                #endif 
+                
+                finalColor *= _Brightness;
+                
+                half3 reflectionContrib = 0;
+                #ifdef _USEREFLECTION
+                    reflectionContrib = CalculateSphericalReflection(mat.normalWS, viewDirWS, mat.metallic, mat.roughness, mat.uv, lightColor);
+                    // 反射应该混合而不是累加，金属度高的材质反射替换漫反射
+                    finalColor = lerp(finalColor, finalColor + reflectionContrib *mat.albedo, mat.metallic);
+                    // 非金属材质的反射叠加
+                    finalColor += (reflectionContrib * (1.0 - mat.metallic) * 0.5);
+                #endif
+                
+                #if defined(_USEMSAMAP) && defined(_USEAOMAP)
+                    mat.aoValue = saturate(fastPow(max(mat.aoValue,0.01), _OcclusionContrast));
+                    mat.aoValue = lerp(1.0, mat.aoValue, _OcclusionStrength);
+                    finalColor *= mat.aoValue;
+                #endif
+                
+                half3 emissionContrib = 0;
+                
+                #ifdef _USEEMISSIONMAP
+                    half3 emissionMap = mat.emissionMap;
+                    emissionMap = AdjustSaturation(emissionMap, min(_EmissionScale, 1.1));
+                    #ifdef _INVERTEMISMAP
+                        emissionMap = 1.0 - emissionMap;
+                    #endif
+                    
+                    emissionContrib = emissionMap * _EmissionColor.rgb * _EmissionScale;
+                #endif
+                
+                finalColor += emissionContrib;
+                
+                finalColor = MixFog(finalColor, input.viewDirWS_fog.w);
+                
+                #ifdef _DEBUGNORMAL
+                    #if defined(_NORMALMAP)
+                        
+                        return half4(mat.normalWS * (1.0-_HalfLambert) + _HalfLambert, 1.0);
+                    #else
+                        
+                        return half4(1.0, 0.0, 0.0, 1.0);
+                    #endif
+                #endif
+                
+                #if defined(_USEMSAMAP) && defined(_PREVIEWAO)
+                return mat.aoValue;
+                #else
+                return half4(finalColor, 1.0);
+                #endif
+            }
+            ENDHLSL
+        }
+        
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags{"LightMode" = "ShadowCaster"}
+            
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull[_Cull]
+            
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            
+            float3 _LightDirection;
+            float4 _ShadowBias; 
+            
+            struct Attributes 
+            { 
+                float4 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+            
+            struct Varyings 
+            { 
+                float4 positionCS : SV_POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+            
+            Varyings vert(Attributes input)
+            {
+                Varyings output;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_TRANSFER_INSTANCE_ID(input, output);
+                
+                float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);
+                float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
+                
+                positionWS = positionWS + _LightDirection * _ShadowBias.x;
+                
+                output.positionCS = TransformWorldToHClip(positionWS);
+                
+                #if UNITY_REVERSED_Z
+                    output.positionCS.z = min(output.positionCS.z, output.positionCS.w * UNITY_NEAR_CLIP_VALUE);
+                #else
+                    output.positionCS.z = max(output.positionCS.z, output.positionCS.w * UNITY_NEAR_CLIP_VALUE);
+                #endif
+                
+                return output;
+            }
+            
+            half4 frag(Varyings input) : SV_Target 
+            {
+                UNITY_SETUP_INSTANCE_ID(input);
+                return 0;
+            }
+            ENDHLSL
+        }
+        
+        Pass
+        {
+            Name "DepthOnly"
+            Tags
+            {
+                "LIGHTMODE" = "DepthOnly"
+                "QUEUE" = "Geometry"
+                "RenderType" = "Opaque"
+                "DisableBatching" = "False"
+                "RenderPipeline" = "UniversalPipeline"
+                "UniversalMaterialType" = "Unlit"
+                "ShaderGraphTargetId" = "UniversalUnlitSubTarget"
+            }
+            
+            ZWrite On
+            ColorMask 0
+            Cull[_Cull]
+            
+            HLSLPROGRAM
+            #pragma vertex DepthOnlyVertex
+            #pragma fragment DepthOnlyFragment
+            
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            
+            struct Attributes
+            {
+                float4 positionOS   : POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+            
+            struct Varyings
+            {
+                float4 positionCS   : SV_POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+            
+            Varyings DepthOnlyVertex(Attributes input)
+            {
+                Varyings output = (Varyings)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_TRANSFER_INSTANCE_ID(input, output);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                
+                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                return output;
+            }
+            
+            half DepthOnlyFragment(Varyings input) : SV_TARGET
+            {
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                
+                return input.positionCS.z;
+            }
+            ENDHLSL
+        }
+        
+        // Meta Pass - 烘焙器读取材质albedo和emission的入口
+        Pass
+        {
+            Name "Meta"
+            Tags { "LightMode" = "Meta" }
+            Cull Off
+
+            HLSLPROGRAM
+            #pragma vertex UniversalVertexMeta
+            #pragma fragment frag_meta
+
+            #pragma shader_feature_local _USEMSAMAP
+            #pragma shader_feature_local _USEEMISSIONMAP
+            #pragma shader_feature_local _INVERTEMISMAP
+            #pragma shader_feature EDITOR_VISUALIZATION
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
+            TEXTURE2D(_MetallicGlossMap);
+            SAMPLER(sampler_MetallicGlossMap);
+            TEXTURE2D(_EmissionMap);
+            SAMPLER(sampler_EmissionMap);
+
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
+                half4 _BaseColor;
+                half _Metallic;
+                half _Roughness;
+                half _SpecularScale;
+                half _ShadowScale;
+                float _Softness;
+                half _HalfLambert;
+                half _Brightness;
+                half _BumpScale;
+                half _OcclusionContrast;
+                half _OcclusionStrength;
+                half _EmissionScale;
+                half4 _EmissionColor;
+                half _LightIntensity;
+
+                float3 _BakedSpecularDirection;
+                
+                float _ReflectionStrength;
+                float _ReflectionBlur;
+                float _ReflectionFresnelPower;
+                float _ReflectionFresnelBias;
+            CBUFFER_END
+
+            // UniversalMetaPass必须在CBUFFER之后include，因为其中的UniversalVertexMeta使用了_BaseMap_ST
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UniversalMetaPass.hlsl"
+
+            half4 frag_meta(Varyings input) : SV_Target
+            {
+                float2 uv = input.uv;
+                half4 baseMap = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv);
+                half3 albedo = baseMap.rgb * _BaseColor.rgb;
+
+                half metallic = _Metallic;
+                half roughness = _Roughness;
+                #ifdef _USEMSAMAP
+                    half4 mra = SAMPLE_TEXTURE2D(_MetallicGlossMap, sampler_MetallicGlossMap, uv);
+                    metallic *= mra.r;
+                    roughness *= mra.g;
+                #endif
+
+                // 与URP Lit一致的能量守恒分配
+                half oneMinusReflectivity = (1.0 - metallic) * 0.96;
+                half3 diffuse = albedo * oneMinusReflectivity;
+                half3 specular = lerp(half3(0.04, 0.04, 0.04), albedo, metallic);
+
+                MetaInput metaInput;
+                metaInput.Albedo = diffuse + specular * roughness * 0.5;
+
+                #ifdef _USEEMISSIONMAP
+                    half3 emissionMap = SAMPLE_TEXTURE2D(_EmissionMap, sampler_EmissionMap, uv).rgb;
+                    #ifdef _INVERTEMISMAP
+                        emissionMap = 1.0 - emissionMap;
+                    #endif
+                    metaInput.Emission = emissionMap * _EmissionColor.rgb * _EmissionScale;
+                #else
+                    metaInput.Emission = half3(0, 0, 0);
+                #endif
+
+                return UniversalFragmentMeta(input, metaInput);
+            }
+            ENDHLSL
+        }
+    }
+    
+    CustomEditor "PBR_MobileGUI"
+}

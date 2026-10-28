@@ -1,0 +1,42 @@
+{
+  "_UseDistanceAtten": 1,
+  "_UseVerShadow": 1,
+  "_UseSelfShadow": 1,
+  "_BaseColor": [1, 0.0235849, 0.3437532, 1],
+  "_UseAlpha": 1,
+  "_ShellAmount": 14,
+  "_FurLength": 0.005,
+  "_AlphaOffset": 0.173,
+  "_AlphaCutout": 0.25,
+  "_FurScale": 1.1,
+  "_Occlusion": 0.429,
+  "_LightStepSoftness": 0.466,
+  "_ShadowBrightness": 0.106,
+  "_Brightness": 1.161,
+  "_UseTouch": 1,
+  "_UseWind": 1,
+  "_BaseMove": [4.85, -0.43, 2.74, 1.08],
+  "_WindFreq": [1.46, 0.34, 2.53, 1],
+  "_WindMove": [0.61, 0.27, -0.29, 2],
+  "_FaceViewProdThresh": 0.0001,
+  "_TouchPosition": [0, 0, 0, 1],
+  "_TouchRadius": 1,
+  "_MaxDepression": 1.3,
+  "_UseWindCone": 1,
+  "_WindConePosition": [0, 0, 0, 1],
+  "_WindConeDirection": [0, 1, 0, 0],
+  "_WindConeAngle": 17.1,
+  "_WindConeRange": 5,
+  "_WindConeFrequencyBoost": 2,
+  "_RimLightIntensity": 2.15
+  "_RimLightEdgeStart": 0.457
+  "_RimLightEdgeEnd": 0.973
+  "_RimShadowStrength": 0.191
+  "_RimBottomStrength": 0.711
+  "_RimLightColor": [1, 0.4761357, 0.3066038, 1]
+  "_NoiseBendStrength": 1.8
+,
+  "_BaseMap": {"path": "Assets/Test/furTexture.tga", "tiling": [1, 1], "offset": [0, 0]},
+  "_FurMap": {"path": "Packages/com.youdoo.victools/Runtime/Testures/FurNoise.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_NoiseMap": {"path": "Packages/com.youdoo.victools/Runtime/Testures/OceanTexture_N.TGA", "tiling": [2.71, 3.33], "offset": [0, 0.01]}
+}
