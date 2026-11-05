@@ -6,6 +6,7 @@
 //                        避免平台压缩 / isReadable=0 / .meta 缺失等坑）
 //   - VicToolsListConfirmWindow：通用【处理列表确认窗口】（非模态,列出待处理清单后由用户确认再执行,
 //                        可在需要展示处理列表时共用该方式）
+// 3.0.1（走兼容层取 ID，兼容 Unity 6000.4+ 下 `GetInstanceID` 被废弃的问题）
 
 using System;
 using System.Collections.Generic;
@@ -13,6 +14,7 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
+using Vic.Runtime;
 
 namespace Vic.Editor
 {
@@ -121,6 +123,8 @@ namespace Vic.Editor
     ///   · 非模态(<see cref="EditorWindow.ShowUtility"/>),不阻塞编辑器事件循环,
     ///     用户可在窗口打开期间自由切到 Console 查看完整日志,确认后再回来点【确定】。
     ///   · 清单可滚动、支持任意条数,每项可选带【定位】按钮(Ping 到 Project 窗口)。
+    ///   · 传入 <c>onAddSingle</c> 时,每项【定位】按钮右侧额外显示【添加】按钮,
+    ///     可不等批量【确定】就把单个对象立即加入资源箱(添加成功后该行按钮置灰)。
     ///   · 同一时间只保留一个实例,重复调用会自动关闭旧窗口,避免叠加。
     ///   · 点【取消】或直接关窗 = 放弃处理,不会执行确认回调。
     ///
@@ -156,6 +160,23 @@ namespace Vic.Editor
             }
         }
 
+        /// 动态状态快照:由 <see cref="Show"/> 的 dynamicStateProvider 提供。
+        /// <remarks>
+        /// 窗口每次绘制(OnGUI)都会重新调用 provider 求值一次,用于"单项添加后待添加数量变化"
+        /// 时让【概要文字】与【确定按钮文字】实时同步,而不是停留在打开窗口那一刻的快照。
+        /// </remarks>
+        public struct DynamicState
+        {
+            /// 概要文字(可多行);为空时沿用 <see cref="Show"/> 传入的静态 summary。
+            public string Summary;
+
+            /// 确定按钮文字(如"确定添加（3）");为空时沿用 Show 传入的静态 confirmButtonText。
+            public string ConfirmButtonText;
+
+            /// 是否禁用确定按钮。默认 false = 启用;用于"待添加数量已归零"时阻止无效的批量提交。
+            public bool ConfirmDisabled;
+        }
+
         private string _summary = string.Empty;
         private string _confirmButtonText = "确定";
         private List<Item> _items = new List<Item>();
@@ -163,21 +184,43 @@ namespace Vic.Editor
         private Action _onCancel;
         private Vector2 _scrollPos;
 
+        // 单项添加回调(非 null 时显示每行的【添加】按钮);返回 true = 添加成功
+        private Func<Object, bool> _onAddSingle;
+
+        // 动态状态提供者(非 null 时每次绘制重新求值概要与按钮文字);见 DynamicState
+        private Func<DynamicState> _dynamicStateProvider;
+
+        // 已通过【添加】按钮成功添加的对象 ID,用于把该行按钮置灰
+        // 用 VicToolsUnityCompat.GetStableId() 取值:Unity 6000.4+ 下 GetInstanceID 已是 error 级废弃,
+        // 统一走兼容层可在 2021/2022/2023/6000.x 各版本下编译通过
+        private readonly HashSet<int> _addedTargetIds = new HashSet<int>();
+
         /// 打开处理列表确认窗口(非模态)。
-        /// </summary>
         /// <param name="title">窗口标题。</param>
         /// <param name="summary">顶部概要文字(可多行,如"待处理 N 个 / 跳过 M 个")。</param>
         /// <param name="items">处理清单;为 null 时显示空列表。</param>
         /// <param name="onConfirm">点击【确定】时执行的回调(传 null 则相当于只看不改)。</param>
         /// <param name="confirmButtonText">确认按钮文字,默认"确定"。</param>
         /// <param name="onCancel">点击【取消】/关窗时执行的回调(可选)。</param>
+        /// <param name="onAddSingle">
+        /// 单项添加回调(可选)。传入后,每行【定位】按钮右侧会显示【添加】按钮,
+        /// 点击即把该行的 <see cref="Item.Target"/> 单独加入目标集合(不等批量【确定】)。
+        /// 返回 true 表示添加成功,窗口会置灰该行按钮并弹出提示;返回 false 表示失败(如已在集合中)。
+        /// </param>
+        /// <param name="dynamicStateProvider">
+        /// 动态状态提供者(可选)。传入后,窗口每次绘制都会重新调用它刷新【概要文字】与【确定按钮文字】,
+        /// 便于"单项添加"后待添加数量变化时保持显示同步(例如"确定添加（10）"随单项添加递减为"确定添加（7）")。
+        /// 为 null 时使用 <c>Show()</c> 传入的静态 summary / confirmButtonText。
+        /// </param>
         public static VicToolsListConfirmWindow Show(
             string title,
             string summary,
             IReadOnlyList<Item> items,
             Action onConfirm,
             string confirmButtonText = "确定",
-            Action onCancel = null)
+            Action onCancel = null,
+            Func<Object, bool> onAddSingle = null,
+            Func<DynamicState> dynamicStateProvider = null)
         {
             // 关闭已存在的旧实例,避免叠加多个预览窗口
             var existed = Resources.FindObjectsOfTypeAll<VicToolsListConfirmWindow>();
@@ -193,6 +236,8 @@ namespace Vic.Editor
             window._items = items != null ? new List<Item>(items) : new List<Item>();
             window._onConfirm = onConfirm;
             window._onCancel = onCancel;
+            window._onAddSingle = onAddSingle;
+            window._dynamicStateProvider = dynamicStateProvider;
             window.minSize = new Vector2(560, 360);
             window.ShowUtility();
             return window;
@@ -200,12 +245,20 @@ namespace Vic.Editor
 
         private void OnGUI()
         {
+            // 求值动态状态:单项添加后待添加数量会变,这里每次绘制都重新取一次,
+            // 保证概要与【确定】按钮上的数量实时递减
+            var dyn = _dynamicStateProvider != null ? _dynamicStateProvider() : default;
+            string curSummary = !string.IsNullOrEmpty(dyn.Summary) ? dyn.Summary : _summary;
+            string curConfirmText = !string.IsNullOrEmpty(dyn.ConfirmButtonText)
+                ? dyn.ConfirmButtonText
+                : _confirmButtonText;
+
             EditorGUILayout.Space(4);
 
-            if (!string.IsNullOrEmpty(_summary))
+            if (!string.IsNullOrEmpty(curSummary))
             {
                 // 逐行绘制,保证多行概要文本正确换行显示
-                var lines = _summary.Split('\n');
+                var lines = curSummary.Split('\n');
                 for (int i = 0; i < lines.Length; i++)
                 {
                     EditorGUILayout.LabelField(lines[i], EditorStyles.wordWrappedLabel);
@@ -218,7 +271,9 @@ namespace Vic.Editor
                 MessageType.Info);
 
             EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField($"处理清单（{_items.Count} 条）：", EditorStyles.miniBoldLabel);
+            string listTitle = $"处理清单（{_items.Count} 条）";
+            if (_addedTargetIds.Count > 0) listTitle += $"，已单独添加 {_addedTargetIds.Count} 条";
+            EditorGUILayout.LabelField(listTitle + "：", EditorStyles.miniBoldLabel);
 
             using (var scroll = new EditorGUILayout.ScrollViewScope(_scrollPos))
             {
@@ -230,10 +285,35 @@ namespace Vic.Editor
 
                     EditorGUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField($"{i + 1}. {item.Text}");
+                    GUI.backgroundColor = Color.white;
                     if (item.Target != null &&
                         GUILayout.Button("定位", GUILayout.Width(40), GUILayout.Height(18)))
                     {
                         EditorGUIUtility.PingObject(item.Target);
+                    }
+
+                    GUI.backgroundColor = new Color(0.9f, 0.49f, 0.5f);
+                    // ── 【添加】按钮:单独把该条对象加入资源箱,不等批量【确定】──
+                    if (_onAddSingle != null && item.Target != null)
+                    {
+                        bool alreadyAdded = _addedTargetIds.Contains(VicToolsUnityCompat.GetStableId(item.Target));
+                        using (new EditorGUI.DisabledScope(alreadyAdded))
+                        {
+                            if (GUILayout.Button(
+                                    new GUIContent("添加", alreadyAdded
+                                        ? "该对象已添加到资源箱"
+                                        : "把该对象单独添加到资源箱(不等批量添加)"),
+                                    GUILayout.Width(40), GUILayout.Height(18)))
+                            {
+                                bool ok = _onAddSingle(item.Target);
+                                if (ok) _addedTargetIds.Add(VicToolsUnityCompat.GetStableId(item.Target));
+                                ShowNotification(new GUIContent(ok
+                                    ? $"已添加: {item.Target.name}"
+                                    : "添加失败(可能已在资源箱中)"));
+                                // 主动重绘:让动态概要与【确定添加（N）】的数量立刻递减
+                                Repaint();
+                            }
+                        }
                     }
                     EditorGUILayout.EndHorizontal();
                 }
@@ -251,12 +331,15 @@ namespace Vic.Editor
                 return;
             }
             GUI.backgroundColor = Color.red;
-            if (GUILayout.Button(_confirmButtonText, GUILayout.Width(140), GUILayout.Height(24)))
+            using (new EditorGUI.DisabledScope(dyn.ConfirmDisabled))
             {
-                // 先取出局部引用再 Close():Close 会触发 OnDestroy 清空字段
-                var confirm = _onConfirm;
-                Close();
-                confirm?.Invoke();
+                if (GUILayout.Button(curConfirmText, GUILayout.Width(140), GUILayout.Height(24)))
+                {
+                    // 先取出局部引用再 Close():Close 会触发 OnDestroy 清空字段
+                    var confirm = _onConfirm;
+                    Close();
+                    confirm?.Invoke();
+                }
             }
             GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
@@ -267,6 +350,9 @@ namespace Vic.Editor
             // 关窗即视为取消,不执行任何处理
             _onConfirm = null;
             _onCancel = null;
+            _onAddSingle = null;
+            _dynamicStateProvider = null;
+            _addedTargetIds.Clear();
             _items = new List<Item>();
         }
     }

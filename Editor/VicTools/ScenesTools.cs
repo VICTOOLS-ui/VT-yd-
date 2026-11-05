@@ -1,68 +1,4 @@
-﻿// 场景工具 v2.14 添加lighting材质(用于烘焙打灯时查看实时灯光效果)快速切换功能按钮
-// 场景工具 v2.16 添加【选择材质】按钮，用于选择场景中选中对象的材质球
-// 场景工具 v2.17 添加【↓】快速统一赋予最后选中对象的材质按钮；添加模型一键落地按钮
-// 场景工具 v2.18 资源箱添加【按类型排序】按钮，对现有资源按类型排列，新增对象会自动按类型排列
-// 场景工具 v2.19 修复丢失对象删除出现的Bug
-// 场景工具 v2.20 添加晶格对象选择按钮
-// 场景工具 v2.21 修复Gug：FindGameObjectByIdentifier 在查找场景对象时，如果保存的 InstanceID 与当前对象的 InstanceID 不匹配（domain reload、编辑器重启后 InstanceID 会变化），就会跳过该对象，即使名称和路径完全匹配。最终导致对象找不到，变成"未知对象"。
-    // 改为"InstanceID 优先匹配，名称/路径兜底"策略。当按名称/路径找到对象但 InstanceID 不同时，仍然返回该对象作为候选。加载后自动检测标识符变化并重新保存更新的 InstanceID，形成自愈。
-// 场景工具 v2.21 资源箱列表高亮显示打开的场景
-// 场景工具 v2.22 修复资源箱对象异常丢失，添加 ResourceBoxBuildPreprocessor — 打包前确保资源箱数据已保存
-// 场景工具 v2.23 修复资源箱对象错误复制Bug，验证场景匹配和名称匹配（防止Domain Reload后InstanceID被分配给不同对象）防止打包后产生灰色重复对象，又不会在刷新时误删已有的正常记录。
-// 场景工具 v2.24 再次优化资源箱列表场景对象出错Bug
-// 场景工具 v2.25 拆分 SceneTools.cs 为独立静态工具类，包含：灯光方向同步材质、PBR Lighting Shader 切换、按类型选择对象、丢失Mesh查找修复、全选层级、赋予材质、设置父子关系、模型落地（碰撞检测+射线兜底）
-// 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh
-// 场景工具 v2.27 修复【挑选-MissMat】逻辑，排除粒子Trail Material；添加重置场景对象位移旋转缩放变换工具按钮。
-//               修复重置旋转按钮显示异常值（清除m_LocalEulerAnglesHint缓存）
-// 场景工具 v2.28 资源箱场景对象存储机制增强：每个场景对象持久化记录 scenePath / sceneName / sceneGuid
-//               标识符改为 ROOT:/SCENE:sceneGuid|sceneName:path:siblingIndex
-//               加载时按 sceneGuid/sceneName 在已加载场景中再次尝试恢复对象
-//               订阅 EditorSceneManager.sceneOpened / activeSceneChangedInEditMode 事件，
-//               场景打开后自动重新尝试恢复 null 对象
-//               【刷新→】按钮合并了按场景信息恢复 null 对象的能力
-// 场景工具 v2.29 资源箱添加【场景】按钮，一键将当前打开的所有场景（多场景支持）放入资源箱
-// 场景工具 v2.30 【选择名称:】按钮支持选中未激活对象。
-// 场景工具 v2.31 防御：obj 可能是纹理 / Prefab / .meta / 子资产等非场景资产，直接传给 OpenScene 会抛 "Invalid version provided" 这种 YAML 解析异常，只接受 .unity 场景资产（含可选的 .unity.meta 后缀防御）。
-// 场景工具 v2.32 添加【吸取位置】按钮，用于继承最后一个选中对象的位移旋转。
-// 场景工具 v2.33 资源箱打开场景按钮兼容团结引擎（Tuanjie）使用的 .scene 文件，与 Unity 原生 .unity 同时识别。
-// 场景工具 v2.34 添加资源箱存档目录打开按钮。
-// 场景工具 v3.0 资源箱列表中 <GameObject> 类型右侧添加激活状态图标按钮（眼睛图标），点击可激活/关闭场景中对应的 GameObject（支持 Undo 撤销）。
-// 场景工具 v3.0 修复资源箱【按类型排序】按钮：之前会破坏暂时无效的场景对象，使"打开包含该对象的场景后自动复原"机制失效（对象显示为"<未知类型> 未知对象"）。
-//               改为排序前按旧索引备份 null 对象的 raw item / displayName / instanceID，排序后按 (obj, oldIndex) 元组直接查回，确保每个 null 对象始终对应自己的恢复信息。
-// 场景工具 v3.0 修正资源箱灰色对象自动恢复逻辑：v3.37 曾要求未激活(activeSelf=false)对象跳过自动恢复、继续保持灰色，
-//               但用户反馈刷新时也需获取未激活对象，不能跳过。改为：场景打开 / 刷新时不管 GameObject 是否激活都自动还原为有效，
-//               眼睛图标按钮(v3.35)按对象在场景中的实际 activeSelf 状态显示：激活=绿色眼睛(点击关闭)，未激活=灰色眼睛(点击激活)。
-// 场景工具 v3.0 真正修复未激活对象恢复：之前 8 处 Object.FindObjectsByType<GameObject> 全部用了单参数重载或 FindObjectsInactive.Exclude，
-//               导致场景中 activeSelf=false 的 GameObject 在所有查找路径(精确ID/按名称/模糊匹配/跨场景兜底/InstanceID失效兜底)中都被静默排除，
-//               所以"打开场景按钮"和"【刷新】"按钮无法解锁未激活的灰色对象。改为统一使用 FindObjectsInactive.Include 显式包含未激活对象，
-//               任何 GameObject 都能在打开场景/刷新/重载时正确恢复，眼睛图标按钮按对象实际 activeSelf 状态显示。
-// 场景工具 v3.0 修复【按类型排序】处理暂时未知对象：之前 null 对象用空字符串作为次级排序键，多个 null 之间会扎堆且没有按"保留的名称"参与排序，
-//               破坏原有相对位置。改为：null 对象用 displayByOldIndex 中保存的 displayName 提取出的原始对象名作为排序键，
-//               与有效对象的 obj.name 语义一致；配合 LINQ 稳定排序保证同名称的对象(包括暂时未知的灰色对象)保留原有排序位置。
-// 场景工具 v3.0 修复【按类型排序】时灰色未知对象仍被排到末尾：v3.40 已让 null 按名称参与次级排序，但主排序键 GetTypeOrder(null)=999，
-//               所有 null 都被统一归到末尾，无法与对应类型的有效对象聚在一起。改为：预先为每个 oldIndex 计算 sortTypeOrder——
-//               有效对象用 GetTypeOrder(obj)；null 对象先取 _nullObjectRawItems[oldIdx].type，否则从 displayName 提取（如"<GameObject> Cube"->"GameObject"），
-//               都取不到回退 999（向后兼容旧的"<未知类型>..."）。让"暂时找不到的 GameObject/Material/Mesh..."与对应类型的有效对象聚在一起按名称排序。
-// 场景工具 v3.0 资源箱 GameObject 激活状态按钮支持多选批量设置：对资源箱多选场景不友好。改为：点击的 GameObject 在 _selectedObjectsInResourceBox 多选集合中且集合元素>1 时，批量把集合中所有 GameObject 的 activeSelf 设为目标状态 targetActive=!gameObj.activeSelf(与原 toggle 语义一致)；
-//               批量操作统一在 Undo group 中，一次 Ctrl+Z 撤销全部。
-// 场景工具 v3.1 修复资源箱"<未知类型> 未知对象"产生逻辑：
-//   ① 修 ResourceBoxFileItem.Type 属性 → 字段 type（JsonUtility 不支持属性，存档丢失 type 是"未知类型"的根因之一）
-//   ② 新增 BuildFallbackDisplayName 统一兜底构造器，9 处硬编码兜底全部走该函数
-//   ③ SaveResourceBox null 项不再硬编码 type="System.Null"/name="NullObject"，改为用 _nullObjectRawItems/_recoveryRawItems 真实 type/name
-//   ④ 加载兜底链（InstanceID 失效/EditorPrefs JSON 损坏/OnGUI 绘制）优先用 raw 缓存重建 displayName
-//   ⑤ LoadResourceBoxFromFile/LoadResourceBoxFromGlobalFile 兜底用 BuildFallbackDisplayName 保留 type 信息
-//   真正完全无信息时才最终回退到"<未知类型> 未知对象"，避免未知对象持久化到存档。
-// 场景工具 v3.2 修复资源箱【同名同类型灰色对象】产生逻辑：
-//   ① RecheckNullObjectsInResourceBox 第一层恢复与第二层 TryRecoverNullItemsBySceneInfo:457 对齐，
-//      资产型 raw（ScriptableObject 等 isAsset=true）跳过全场景 GameObject 按名搜，
-//      防止 UniversalRenderData 这类资产丢失变 null 后被错误恢复成同名 GameObject。
-//   ② 按名匹配时统计同名候选数量，>1 时输出警告让用户感知歧义而非默默恢复到错对象。
-//  资源箱列表保存路径"ResourceBox"改为"ResourceBox~"：
-//   ① PathHelper.GetAssetsEditorPath() 返回路径 Editor/VicTools/ResourceBox → Editor/VicTools/ResourceBox~
-//   ② OpenResourceBoxFolder() 中 RevealInFinder 调用去掉重复追加"/ResourceBox"的 bug（directoryPath 已包含完整目录），统一走 ResourceBox~。
-// 【场景工具 v3.3】优化资源箱按钮布局；修复Mesh查找不到FBX中的Mesh问题。
-// 【场景工具 v3.4】资源箱列表 <...> 类型标签区分场景对象 / 预制体资产 / 预制体实例 / Project 资产，根据分类优化类型排序。
-// 【场景工具 v3.5】资源箱新增【UnityLogo 图标】按钮，一键把项目中 Assets 目录下的所有场景（.unity / .scene）放入资源箱；添加前先弹（扫描结果预览）确认。资源箱新增【渲染管线配置】按钮：扫描项目设置（GraphicsSettings/QualitySettings）引用的渲染管线资产、当前生效的默认/当前质量等级管线、项目内全部 RenderPipelineAsset 以及其引用的渲染器数据，同样走公共确认窗口 VicToolsListConfirmWindow 确认后再入箱。资源箱新增【添加当前场景主光】按钮：按 URP 主光规则（平行光 + 优先 Sun Source + 强度×颜色最大分量）判定当前场景主光，走公共确认窗口列出主光清单（名称/强度/颜色/阴影/所属场景），确认后把主光所在 GameObject 放入资源箱，并直接选中（Hierarchy 选中 + Ping）该主光。
+﻿// 【场景工具 v3.7】修复资源箱里的对象加载后变灰、出现同名重复成员、保存后类型/名称/GUID 串位。
 
 using System;
 using UnityEngine;
@@ -225,7 +161,7 @@ public class ResourceBoxRecoveryItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v3.5]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v3.7]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -987,9 +923,9 @@ public class ResourceBoxRecoveryItem
             //   改用反射翻 EditorStyles 静态字段 + GUISkin.m_Styles 内部数组，
             //   命中后克隆样式（保留 9-slice border，不被压缩）。
             //   全部拿不到时退到 IconContent + 手动 border(4)，最后兜底 helpBox。
-            var dropBg = TryFindBuiltinStyle("sv_icon_name0");
+            var dropBg = TryFindBuiltinStyle("RectTool");
             if (dropBg == null) {
-                var dropIcon = EditorGUIUtility.IconContent("sv_icon_name0");
+                var dropIcon = EditorGUIUtility.IconContent("RectTool");
                 dropBg = new GUIStyle();
                 if (dropIcon != null && dropIcon.image is Texture2D dropTex) {
                     dropBg.normal.background = dropTex;
@@ -1001,7 +937,7 @@ public class ResourceBoxRecoveryItem
             dropBg.alignment = TextAnchor.MiddleCenter;
             dropBg.fontSize = 12;
             // ★深色状态机背景上的文字需要强制白色，否则默认 textColor 在深底上几乎看不见
-            dropBg.normal.textColor = new Color(0.5f, 0.23f, 0.47f);
+            dropBg.normal.textColor = new Color(0.75f, 0.43f, 0.77f);
             // 绘制带状态机背景的拖拽区域
             GUI.Box(dropArea, "拖拽区域：从 Project 或场景 Hierarchy 中拖入资源箱 ↓", dropBg);
 
@@ -1065,37 +1001,75 @@ public class ResourceBoxRecoveryItem
 
             EditorGUILayout.EndHorizontal();
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField($"资源箱: ( {_resourceBox.Count} )", style.subheading, GUILayout.Height(24));
+            // 资源箱标题行：整行垂直居中
+            // 组样式的 alignment 不会传递给子控件，真正的垂直居中靠子控件自身样式：
+            //   文字 -> MiddleLeft（垂直居中 + 水平保持靠左）
+            //   图标 -> 绝对坐标绘制，纵向中心对齐文字行盒中心
+            EditorGUILayout.BeginHorizontal(new GUIStyle() { alignment = TextAnchor.MiddleCenter });
+            // 标题文本 + 清除按钮：整行手工布局
+            //   文字宽度按内容自适应，图标按钮紧贴文字右边缘；
+            //   图标按钮用绝对坐标绘制，纵向中心对齐文字行盒中心，避免受
+            //   GUILayout 对齐/图片在按钮内的绘制位置影响而出现高低偏差
+            GUIStyle resourceBoxTitleStyle = new GUIStyle(style.subheading)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                padding = new RectOffset(0, 0, 0, 0)
+            };
+            string resourceBoxTitle = $"资源箱: ( {_resourceBox.Count} )";
+            GUIContent titleContent = new GUIContent(resourceBoxTitle);
+            float titleTextWidth = Mathf.Ceil(resourceBoxTitleStyle.CalcSize(titleContent).x) + 1f;
+
+            Texture clearIcon = EditorGUIUtility.IconContent("d_CacheServerDisconnected").image;
+            int clearIconWidth = clearIcon != null ? clearIcon.width : 20;
+
+            // 整行占位：文字宽 + 图标宽（后续 FlexibleSpace 把剩余空间让给右侧按钮组）
+            Rect titleRowRect = GUILayoutUtility.GetRect(titleTextWidth + clearIconWidth, 24f,
+                GUILayout.Width(titleTextWidth + clearIconWidth), GUILayout.Height(24f));
+
+            // 文字：垂直居中绘制在行内
+            GUI.Label(new Rect(titleRowRect.x, titleRowRect.y, titleTextWidth, titleRowRect.height), titleContent, resourceBoxTitleStyle);
+
+            // 图标按钮：紧贴文字右边缘 +6 向右偏移，纵向中心 = 文字行盒中心 +2f 视觉微调下移量
+            float titleCenterY = titleRowRect.center.y + 2f;
+            Rect clearIconRect = new Rect(titleRowRect.x + titleTextWidth +6, titleCenterY - clearIconWidth * 0.5f, clearIconWidth, clearIconWidth);
+            if (GUI.Button(clearIconRect, new GUIContent(clearIcon, "清空资源箱中所有内容！"), GUIStyle.none))
+            {
+                ClearResourceBoxWithConfirmation();
+            }
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("Profiler.Rendering").image, "添加当前场景主光"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
+
+            GUI.backgroundColor = Color.black;
+            EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("FrameCapture").image, "添加当前场景摄像机"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(20)))
+            {
+                AddCurrentSceneCamerasToResourceBox();
+            }
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("Profiler.Rendering").image, "添加当前场景主光"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(20)))
             {
                 AddCurrentSceneMainLightToResourceBox();
             }
             // 清除资源箱按钮（带确认）
-            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("UnityLogo").image, "添加项目中所有场景"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("UnityLogo").image, "添加项目中所有场景"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(20)))
             {
                 AddAllProjectScenesToResourceBox();
             }
             // 添加项目中渲染管线配置文件按钮-渲染管线配置文件图标
-            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_ScriptableObject Icon").image, "添加项目中渲染管线配置文件"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_ScriptableObject Icon").image, "添加项目中渲染管线配置文件"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(20)))
             {
                 AddAllProjectRenderPipelineAssetsToResourceBox();
             }
-            GUILayout.Space(10);
-            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_CacheServerDisconnected").image, "清空资源箱中所有内容！"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(22)))
-            {
-                ClearResourceBoxWithConfirmation();
-            }
+            EditorGUILayout.EndHorizontal();
+            GUILayout.Space(2);
+            
             // 按类型排序按钮
             GUI.backgroundColor = Color.yellow;
-            if (GUILayout.Button("按类型排序"))
+            if (GUILayout.Button("按类型排序", GUILayout.Height(25)))
             {
                 SortResourceBoxByType();
             }
             // 一键将当前打开的所有场景放入资源箱
             GUI.backgroundColor = Color.magenta;
-            if (GUILayout.Button(new GUIContent("场景↓", "将当前打开的所有场景(支持多场景)放入资源箱")))
+            if (GUILayout.Button(new GUIContent("场景↓", "将当前打开的所有场景(支持多场景)放入资源箱"), GUILayout.Height(25)))
             {
                 AddOpenScenesToResourceBox();
             }
@@ -1125,7 +1099,12 @@ public class ResourceBoxRecoveryItem
             // 文件名输入和操作按钮
             // EditorGUILayout.LabelField("资源名:", GUILayout.Width(42));
             _resourceBoxFileName = EditorGUILayout.TextField(_resourceBoxFileName);
-            
+            // 打开资源箱存档目录文件夹按钮（位于"载入↓"左侧）
+            // GUI.backgroundColor = new Color(1f, 0.55f, 0.4f);
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_FolderOpened Icon").image, "打开资源箱列表存档目录文件夹"), new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(22), GUILayout.Height(22)))
+            {
+                OpenResourceBoxFolder();
+            }
             // GUI.backgroundColor = Color.white;
             // 文件选择下拉列表
             // EditorGUILayout.LabelField("选择资源:", GUILayout.Width(55));
@@ -1142,12 +1121,6 @@ public class ResourceBoxRecoveryItem
                         // LoadResourceBoxFromFile();
                     }
                 }
-            }
-            // 打开资源箱存档目录文件夹按钮（位于"载入↓"左侧）
-            // GUI.backgroundColor = new Color(1f, 0.55f, 0.4f);
-            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_FolderOpened Icon").image, "打开资源箱列表存档目录文件夹"), new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(22), GUILayout.Height(22)))
-            {
-                OpenResourceBoxFolder();
             }
             // 刷新文件列表按钮
             if (GUILayout.Button("刷新↻", GUILayout.Width(50)))
@@ -1503,7 +1476,7 @@ public class ResourceBoxRecoveryItem
                                 {
                                     bool isDirty = SceneManager.GetActiveScene().isDirty;
                                     GUI.backgroundColor = isDirty ? new Color(0.94f, 0.31f, 0.96f) : Color.gray;
-                                    iconName = isDirty ? "TerrainInspector.TerrainToolSplat" : "d_CloudConnect";
+                                    iconName = isDirty ? "TerrainInspector.TerrainToolSplat" : "TerrainInspector.TerrainToolSmoothHeight";
                                 }
                                 else
                                 {
@@ -1642,61 +1615,11 @@ public class ResourceBoxRecoveryItem
                             }
                         }
                         
-                        _resourceBox.RemoveAt(i);
-                        
-                        // 重新构建null对象显示名称字典和InstanceID映射，更新所有受影响的索引
-                        var tempNullDisplayNames = new Dictionary<int, string>();
-                        var tempInstanceIDs = new Dictionary<int, int>();
-                        
-                        foreach (var kvp in _nullObjectDisplayNames)
-                        {
-                            if (kvp.Key < i)
-                            {
-                                // 删除位置之前的索引保持不变
-                                tempNullDisplayNames[kvp.Key] = kvp.Value;
-                            }
-                            else if (kvp.Key > i)
-                            {
-                                // 删除位置之后的索引需要减1
-                                tempNullDisplayNames[kvp.Key - 1] = kvp.Value;
-                            }
-                            // kvp.Key == i 的项被删除，不添加到新字典中
-                        }
-                        
-                        foreach (var kvp in _resourceBoxInstanceIDs)
-                        {
-                            if (kvp.Key < i)
-                            {
-                                tempInstanceIDs[kvp.Key] = kvp.Value;
-                            }
-                            else if (kvp.Key > i)
-                            {
-                                tempInstanceIDs[kvp.Key - 1] = kvp.Value;
-                            }
-                        }
-                        
-                        _nullObjectDisplayNames.Clear();
-                        _resourceBoxInstanceIDs.Clear();
-                        
-                        foreach (var kvp in tempNullDisplayNames)
-                        {
-                            _nullObjectDisplayNames[kvp.Key] = kvp.Value;
-                        }
-                        
-                        foreach (var kvp in tempInstanceIDs)
-                        {
-                            _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
-                        }
-
-                        // v2.28: 同步重建 _nullObjectRawItems
-                        var tempRawItems = new Dictionary<int, ResourceBoxRecoveryItem>();
-                        foreach (var kvp in _nullObjectRawItems)
-                        {
-                            if (kvp.Key < i) tempRawItems[kvp.Key] = kvp.Value;
-                            else if (kvp.Key > i) tempRawItems[kvp.Key - 1] = kvp.Value;
-                        }
-                        _nullObjectRawItems.Clear();
-                        foreach (var kvp in tempRawItems) _nullObjectRawItems[kvp.Key] = kvp.Value;
+                        // v3.7：统一走 RemoveResourceBoxSlotAt —— 删除列表项并同步位移所有"以索引为键"的元数据表
+                        // （_nullObjectDisplayNames / _nullObjectRawItems / _resourceBoxInstanceIDs / _recoveryRawItems）。
+                        // 旧实现漏掉了 _recoveryRawItems，删除后它与列表错位，
+                        // 存档时就会把别的对象的 type/name/guid 写进灰色占位 → 加载出重名的灰色成员。
+                        RemoveResourceBoxSlotAt(i);
 
                         // 立即保存资源箱数据
                         SaveResourceBox(false);
@@ -2289,49 +2212,51 @@ public class ResourceBoxRecoveryItem
             _nullObjectRawItems.Clear();
             foreach (var kvp in newNullRawItems) _nullObjectRawItems[kvp.Key] = kvp.Value;
 
+            // v3.7：_recoveryRawItems 与 _resourceBox 是并行表，排序后必须同步重排。
+            // 旧实现漏掉了它 → 排序后它与列表错位 → 存档时按索引取 type/name/guid 会取到别的对象的数据
+            // → 写出"displayName 属于 A、guid 属于 B"的杂交条目 → 下次加载出重名的灰色成员。
+            if (_recoveryRawItems != null)
+            {
+                var newRawItems = new List<ResourceBoxRecoveryItem>(sorted.Count);
+                for (int newIdx = 0; newIdx < sorted.Count; newIdx++)
+                {
+                    int oldIdx = sorted[newIdx].oldIndex;
+                    newRawItems.Add(oldIdx >= 0 && oldIdx < _recoveryRawItems.Count ? _recoveryRawItems[oldIdx] : null);
+                }
+                _recoveryRawItems = newRawItems;
+            }
+
             SaveResourceBox(false);
             if (Parent) Parent.Repaint();
         }
 
         /// 重建 null 对象显示名称和 InstanceID 的索引映射
+        /// v3.7 修复：旧实现会清空 _nullObjectDisplayNames，再按"任意未被占用的旧 instanceID"重新分配显示名。
+        /// 插入元素后（后面的槽位整体后移），null 槽位很容易被分配到别的对象的显示名 →
+        /// 存档后就变成"displayName 属于 A、guid 属于 B"的杂交条目 → 加载出重名的灰色成员。
+        /// 现在显示名由 ShiftIndexedMetadataUp/Down 按槽位身份维护，这里只刷新有效对象的 InstanceID。
         private void RebuildIndexMappings()
         {
-            // 重建 instanceID -> index 映射
             var newInstanceIDs = new Dictionary<int, int>();
-            var newNullDisplayNames = new Dictionary<int, string>();
-
-            // 先建立 instanceID -> displayName 的反查表（旧索引）
-            var idToDisplay = new Dictionary<int, string>(_instanceIDToDisplayName);
 
             for (int i = 0; i < _resourceBox.Count; i++)
             {
                 var obj = _resourceBox[i];
                 if (obj != null)
                 {
-                    int iid = VicToolsUnityCompat.GetReversibleId(obj);
-                    newInstanceIDs[i] = iid;
+                    newInstanceIDs[i] = VicToolsUnityCompat.GetReversibleId(obj);
                 }
-                else
+                else if (_resourceBoxInstanceIDs.TryGetValue(i, out int keptInstanceID))
                 {
-                    // null 对象：从旧 instanceID 映射中找 displayName
-                    // 遍历旧 _resourceBoxInstanceIDs 找到对应 instanceID
-                    foreach (var kvp in _resourceBoxInstanceIDs)
-                    {
-                        if (!newInstanceIDs.ContainsValue(kvp.Value) &&
-                            idToDisplay.TryGetValue(kvp.Value, out var dn))
-                        {
-                            newInstanceIDs[i] = kvp.Value;
-                            newNullDisplayNames[i] = dn;
-                            break;
-                        }
-                    }
+                    // null 槽位：保留原有 InstanceID 映射（索引已由 Shift* 同步位移）
+                    newInstanceIDs[i] = keptInstanceID;
                 }
             }
 
             _resourceBoxInstanceIDs.Clear();
-            _nullObjectDisplayNames.Clear();
             foreach (var kvp in newInstanceIDs) _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
-            foreach (var kvp in newNullDisplayNames) _nullObjectDisplayNames[kvp.Key] = kvp.Value;
+
+            // _nullObjectDisplayNames 已由索引位移函数按槽位身份维护，此处不再清空重建
             // v2.28: 重建 null 原始项索引（按当前 _resourceBox 顺序重新映射）
             RebuildNullObjectRawItemsIndex();
         }
@@ -2359,11 +2284,52 @@ public class ResourceBoxRecoveryItem
             }
             _resourceBox.Insert(insertIndex, obj);
 
+            // v3.7：插入会让后面所有槽位下标 +1，
+            //   而 _nullObjectDisplayNames / _nullObjectRawItems / _resourceBoxInstanceIDs / _recoveryRawItems
+            //   都是"以列表下标为键"的表，不同步位移就会与列表错位 →
+            //   之后按索引取 type/name/guid 会取到别的对象的数据，
+            //   存档后就会出现"displayName 属于 A、guid 属于 B"的杂交条目 → 加载出重名的灰色成员。
+            ShiftIndexedMetadataUp(insertIndex);
+            if (_recoveryRawItems != null)
+            {
+                _recoveryRawItems.Insert(Math.Min(insertIndex, _recoveryRawItems.Count), null);
+            }
+
             var parentName = GetTopLevelParentName(obj);
             var displayName = !string.IsNullOrEmpty(parentName)
                 ? $"<{GetTypeDisplayName(obj)}> [{parentName}]← {obj.name}"
                 : $"<{GetTypeDisplayName(obj)}> {obj.name}";
             _resourceBoxDisplayNames[obj] = displayName;
+        }
+
+        /// 把单个对象添加到资源箱(公开 API,供确认窗口【添加】按钮等外部工具调用)
+        /// <remarks>
+        /// 与 <see cref="AddSelectedToResourceBox"/> 的差异:只处理传入的单个对象,而非当前选中集。
+        /// 内部去重(_resourceBox.Contains),并清除场景对象的 DontSaveInEditor 标志
+        /// (否则 SaveResourceBox 阶段会跳过场景对象),最后重建索引映射 / 刷新选中态 / 重绘 / 自动落盘。
+        /// </remarks>
+        /// <param name="obj">要添加的对象:场景对象 / Prefab / Material / Texture 等任意 UnityEngine.Object。</param>
+        /// <returns>true = 已添加;false = 对象无效或已在资源箱中(去重)。</returns>
+        public bool AddObjectToResourceBox(Object obj)
+        {
+            if (!obj) return false;                       // null / 已被销毁
+            if (_resourceBox.Contains(obj)) return false; // 去重:同一实例只保留一份
+
+            // 场景对象默认带 DontSaveInEditor,不清掉会存不进存档
+            if (((int)obj.hideFlags & (int)HideFlags.DontSaveInEditor) != 0)
+            {
+                obj.hideFlags &= ~HideFlags.DontSaveInEditor;
+                Debug.Log($"已清除对象 {obj.name} 的DontSaveInEditor标志");
+            }
+
+            // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+            RemoveStaleNullPlaceholderFor(obj);
+            InsertToResourceBoxByType(obj);           // 按类型插入 + 生成 displayName
+            RebuildIndexMappings();                   // 重建 InstanceID→索引 映射
+            UpdateSelectedObjectsInResourceBox();      // 刷新列表项上的选中态图标
+            if (Parent) Parent.Repaint();             // 重绘场景工具界面
+            SaveResourceBox(false);                   // 立即落盘(自动保存,不弹确认框)
+            return true;
         }
 
         private void HandleDragAndDropObjects(Object[] draggedObjects)
@@ -2381,6 +2347,8 @@ public class ResourceBoxRecoveryItem
                     Debug.Log($"已清除对象 {obj.name} 的DontSaveInEditor标志");
                 }
 
+                // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+                RemoveStaleNullPlaceholderFor(obj);
                 InsertToResourceBoxByType(obj);
                 addedCount++;
             }
@@ -2414,6 +2382,8 @@ public class ResourceBoxRecoveryItem
                     Debug.Log($"已清除对象 {obj.name} 的DontSaveInEditor标志");
                 }
 
+                // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+                RemoveStaleNullPlaceholderFor(obj);
                 InsertToResourceBoxByType(obj);
                 addedCount++;
             }
@@ -2463,6 +2433,8 @@ public class ResourceBoxRecoveryItem
                     continue;
                 }
 
+                // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+                RemoveStaleNullPlaceholderFor(sceneAsset);
                 InsertToResourceBoxByType(sceneAsset);
                 addedCount++;
             }
@@ -2606,19 +2578,45 @@ public class ResourceBoxRecoveryItem
                     AssetDatabase.GetAssetPath(sceneAsset), sceneAsset));
             }
 
-            var summary = $"待添加场景：{newScenes.Count} 个";
-            if (skippedCount > 0) summary += $"\n已在资源箱（跳过）：{skippedCount} 个";
-            if (failedCount > 0) summary += $"\n加载失败：{failedCount} 个";
+            var summary = BuildScenesSummary(newScenes.Count, skippedCount, failedCount);
 
             // 公共窗口（Vic.Editor.VicToolsListConfirmWindow）：非模态，用户确认后才执行添加
+            // onAddSingle：清单每行【定位】右侧多一个【添加】按钮，可不等批量【确定】就把单个场景单独加入资源箱；
+            //              添加成功后从 newScenes 移除 → newScenes.Count 递减
+            // dynamicStateProvider：每次绘制重新求值，让概要与【确定添加（N）】随单项添加实时递减
             VicToolsListConfirmWindow.Show(
                 "添加项目场景",
                 summary,
                 confirmItems,
                 () => AddScenesToResourceBox(newScenes, capturedSkipped, capturedFailed),
                 $"确定添加（{newScenes.Count}）",
-                () => Debug.Log("[ResourceBox] 已取消添加项目场景"));
+                () => Debug.Log("[ResourceBox] 已取消添加项目场景"),
+                obj => AddSingleAndRemove(obj, newScenes),
+                () => new VicToolsListConfirmWindow.DynamicState
+                {
+                    Summary = BuildScenesSummary(newScenes.Count, capturedSkipped, capturedFailed),
+                    ConfirmButtonText = $"确定添加（{newScenes.Count}）",
+                    ConfirmDisabled = newScenes.Count <= 0,
+                });
+
             // 实际写入由预览窗口的【确定添加】按钮触发；此处直接返回
+        }
+
+        /// 组装"添加项目场景"确认窗口的概要文字
+        /// <remarks>
+        /// 单项添加会从待添加列表移除已入箱场景,导致待添加数量变化,
+        /// 因此该方法在窗口每次绘制时重新调用,保证概要里的数量实时准确。
+        /// </remarks>
+        /// <param name="pendingCount">当前待添加(尚未入箱)的场景数量。</param>
+        /// <param name="skippedCount">扫描阶段就已在资源箱中的场景数量。</param>
+        /// <param name="failedCount">加载失败的场景数量。</param>
+        private static string BuildScenesSummary(int pendingCount, int skippedCount, int failedCount)
+        {
+            var s = $"待添加场景：{pendingCount} 个";
+            if (pendingCount <= 0) s += "\n全部已添加，无需新增";
+            if (skippedCount > 0) s += $"\n已在资源箱（跳过）：{skippedCount} 个";
+            if (failedCount > 0) s += $"\n加载失败：{failedCount} 个";
+            return s;
         }
 
         /// 把确认后的场景列表写入资源箱（由预览窗口的【确定添加】按钮回调）
@@ -2631,6 +2629,8 @@ public class ResourceBoxRecoveryItem
             {
                 if (!sceneAsset) continue;                  // 资源被删除等异常
                 if (_resourceBox.Contains(sceneAsset)) continue; // 二次校验，避免重复添加
+                // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+                RemoveStaleNullPlaceholderFor(sceneAsset);
                 InsertToResourceBoxByType(sceneAsset);
                 addedCount++;
             }
@@ -2653,6 +2653,48 @@ public class ResourceBoxRecoveryItem
             Debug.Log($"[ResourceBox] {summary}");
             // 完成提示同样不做模态弹窗：主窗口顶部气泡提示，不阻塞 Console
             if (Parent) Parent.ShowNotification(new GUIContent(summary));
+        }
+
+        /// 单项添加回调：把确认窗口里某一行【添加】按钮对应的对象单独加入资源箱
+        /// <remarks>
+        /// 与 <see cref="AddScenesToResourceBox"/>（批量确认后写入）的区别：
+        /// 这里只处理用户当场点【添加】的那一个对象，立即生效并落盘。
+        /// </remarks>
+        /// <returns>true = 已添加；false = 已在资源箱中或对象无效。</returns>
+        private bool AddSingleObjectToResourceBox(Object obj)
+        {
+            if (!obj) return false;
+
+            bool ok = AddObjectToResourceBox(obj);
+            if (ok)
+            {
+                Debug.Log($"[ResourceBox] 已添加 {obj.name}");
+                if (Parent) Parent.ShowNotification(new GUIContent($"已添加: {obj.name}"));
+            }
+            else
+            {
+                Debug.Log($"[ResourceBox] {obj.name} 已在资源箱中,跳过");
+                if (Parent) Parent.ShowNotification(new GUIContent($"{obj.name} 已在资源箱中"));
+            }
+            return ok;
+        }
+
+        /// 通用单项添加回调:添加成功后再把该对象从"待添加列表"移除,使全局待添加数量递减
+        /// <remarks>
+        /// 待添加列表(pendingList)只含"尚未入箱、批量操作会写入"的对象。
+        /// 单项添加成功后把对象移出该列表 → 列表 Count 递减 → 配合
+        /// <c>VicToolsListConfirmWindow.DynamicState</c>,概要与【确定添加（N）】上的数量实时递减。
+        /// </remarks>
+        /// <typeparam name="T">待添加列表的元素类型(须为 UnityEngine.Object 派生类)。</typeparam>
+        /// <param name="obj">被点击【添加】按钮的对象。</param>
+        /// <param name="pendingList">本次批量操作的待添加列表。</param>
+        /// <returns>true = 已添加(并已从待添加列表移除);false = 添加失败(如已在资源箱中)。</returns>
+        private bool AddSingleAndRemove<T>(Object obj, List<T> pendingList) where T : Object
+        {
+            bool ok = AddSingleObjectToResourceBox(obj);
+            // 从待添加列表移除 → 待添加数量递减(UnityEngine.Object 的 Equals 按 InstanceID 比较,Remove 可正确命中)
+            if (ok && obj is T typed && pendingList != null) pendingList.Remove(typed);
+            return ok;
         }
 
         /// v3.5 新增：一键把【当前场景主光】放入资源箱
@@ -2686,19 +2728,42 @@ public class ResourceBoxRecoveryItem
                     mainGo)
             };
 
-            var summary = $"当前场景主光：1 个\n判定范围：{scope}\n范围内平行光：{allDirectional.Count} 个";
-            if (alreadyInBox) summary += "\n已在资源箱（跳过）";
+            // 待添加列表:只在主光尚未入箱时才有内容 → 单项添加后移除 → 待添加数量递减
+            var pendingLights = new List<GameObject>();
+            if (!alreadyInBox) pendingLights.Add(mainGo);
+
+            var summary = BuildMainLightSummary(pendingLights.Count, scope, allDirectional.Count, alreadyInBox);
 
             int capturedSkipped = alreadyInBox ? 1 : 0;
 
             // 公共窗口（Vic.Editor.VicToolsListConfirmWindow）：非模态，用户确认后才执行添加
+            // onAddSingle：单项添加后从 pendingLights 移除 → 待添加数量递减
+            // dynamicStateProvider：每次绘制重新求值，概要与【确定添加（N）】实时递减
+            // 注：确定按钮始终可用 —— 主光已在箱时点击仍会定位并选中它（见 AddMainLightToResourceBox）
             VicToolsListConfirmWindow.Show(
                 "添加当前场景主光",
                 summary,
                 items,
                 () => AddMainLightToResourceBox(mainGo, capturedSkipped),
-                "确定添加（1）",
-                () => Debug.Log("[ResourceBox] 已取消添加当前场景主光"));
+                $"确定添加（{pendingLights.Count}）",
+                () => Debug.Log("[ResourceBox] 已取消添加当前场景主光"),
+                obj => AddSingleAndRemove(obj, pendingLights),
+                () => new VicToolsListConfirmWindow.DynamicState
+                {
+                    Summary = BuildMainLightSummary(pendingLights.Count, scope, allDirectional.Count, alreadyInBox),
+                    ConfirmButtonText = $"确定添加（{pendingLights.Count}）",
+                    ConfirmDisabled = false,
+                });
+        }
+
+        /// 组装"添加当前场景主光"确认窗口的概要文字
+        /// <remarks>单项添加会移除待添加列表内容,故每次绘制重新调用以保持数量准确。</remarks>
+        private static string BuildMainLightSummary(int pendingCount, string scope, int directionalCount, bool alreadyInBox)
+        {
+            var s = $"当前场景主光：1 个\n判定范围：{scope}\n范围内平行光：{directionalCount} 个";
+            if (alreadyInBox) s += "\n已在资源箱（跳过）";
+            if (pendingCount <= 0 && !alreadyInBox) s += "\n已单独添加，无需新增";
+            return s;
         }
 
         /// 把确认后的主光写入资源箱（由公共确认窗口的【确定添加】按钮回调）
@@ -2716,6 +2781,8 @@ public class ResourceBoxRecoveryItem
             }
 
             // 资源箱里存 GameObject（与"放入资源箱↓"保持一致），便于场景打开后自动复原
+            // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+            RemoveStaleNullPlaceholderFor(mainLightGo);
             InsertToResourceBoxByType(mainLightGo);
 
             // 添加后直接选中主光（选中后再刷新资源箱高亮，保证资源箱里同步显示选中态）
@@ -2822,6 +2889,181 @@ public class ResourceBoxRecoveryItem
             }
 
             return best;
+        }
+
+        /// v3.6 新增：一键把【当前场景所有摄像机】放入资源箱
+        /// 扫描范围：活动场景优先；活动场景内没有摄像机时退到其它已加载场景
+        /// 流程：只读扫描 → 公共确认窗口（Vic.Editor.VicToolsListConfirmWindow）列出摄像机清单 → 用户确认后才写入资源箱
+        private void AddCurrentSceneCamerasToResourceBox()
+        {
+            var cameras = FindCurrentSceneCameras(out var scope);
+            if (cameras.Count == 0)
+            {
+                Debug.LogWarning("[ResourceBox] 当前场景未找到摄像机");
+                if (Parent) Parent.ShowNotification(new GUIContent("当前场景未找到摄像机"));
+                return;
+            }
+
+            var items = new List<VicToolsListConfirmWindow.Item>(cameras.Count);
+            var cameraObjects = new List<GameObject>(cameras.Count);
+            // 待添加列表:只含"尚未入箱、批量操作会写入"的摄像机
+            // 单项添加成功后从中移除 → 待添加数量递减
+            var pendingCameras = new List<GameObject>(cameras.Count);
+            int alreadyInBox = 0;
+
+            foreach (var cam in cameras)
+            {
+                var go = cam.gameObject;
+                cameraObjects.Add(go);
+
+                bool inBox = _resourceBox.Contains(go);
+                if (inBox) alreadyInBox++;
+                else pendingCameras.Add(go);
+
+                var mainTag = cam == Camera.main ? "主摄像机、" : "";
+                var rtTag = cam.targetTexture != null ? "渲染到纹理、" : "";
+                var stateText = cam.enabled ? "启用" : "禁用";
+                var depthText = $"渲染顺序 {cam.depth:0.##}";
+
+                items.Add(new VicToolsListConfirmWindow.Item(
+                    $"摄像机：{go.name}（{mainTag}{rtTag}{GetCameraTypeText(cam)} / {stateText} / {depthText} / 场景 {go.scene.name}）" +
+                    (inBox ? "（已在资源箱）" : ""),
+                    go));
+            }
+
+            var summary = BuildCamerasSummary(cameras.Count, pendingCameras.Count, alreadyInBox, scope);
+
+            int capturedSkipped = alreadyInBox;
+
+            // 公共窗口（Vic.Editor.VicToolsListConfirmWindow）：非模态，用户确认后才执行添加
+            // onAddSingle：单项添加后从 pendingCameras 移除 → 待添加数量递减
+            // dynamicStateProvider：每次绘制重新求值，概要与【确定添加（N）】实时递减
+            // 注：批量写入仍传 cameraObjects 全量，内部二次校验会跳过已单独添加的（不会重复入箱）
+            VicToolsListConfirmWindow.Show(
+                "添加当前场景摄像机",
+                summary,
+                items,
+                () => AddCamerasToResourceBox(cameraObjects, capturedSkipped),
+                $"确定添加（{pendingCameras.Count}）",
+                () => Debug.Log("[ResourceBox] 已取消添加当前场景摄像机"),
+                obj => AddSingleAndRemove(obj, pendingCameras),
+                () => new VicToolsListConfirmWindow.DynamicState
+                {
+                    Summary = BuildCamerasSummary(cameras.Count, pendingCameras.Count, alreadyInBox, scope),
+                    ConfirmButtonText = $"确定添加（{pendingCameras.Count}）",
+                    ConfirmDisabled = pendingCameras.Count <= 0,
+                });
+        }
+
+        /// 组装"添加当前场景摄像机"确认窗口的概要文字
+        /// <remarks>单项添加会移除待添加列表内容,故每次绘制重新调用以保持数量准确。</remarks>
+        private static string BuildCamerasSummary(int totalCount, int pendingCount, int skippedCount, string scope)
+        {
+            var s = $"当前场景摄像机：{totalCount} 个\n判定范围：{scope}";
+            if (skippedCount > 0) s += $"\n已在资源箱（跳过）：{skippedCount} 个";
+            if (pendingCount <= 0) s += "\n全部已在资源箱，无需新增";
+            return s;
+        }
+
+        /// 把确认后的摄像机写入资源箱（由公共确认窗口的【确定添加】按钮回调）
+        private void AddCamerasToResourceBox(List<GameObject> cameraObjects, int skippedCount)
+        {
+            if (cameraObjects == null || cameraObjects.Count == 0) return;
+
+            var added = new List<Object>();
+            foreach (var go in cameraObjects)
+            {
+                if (go == null) continue;              // 对象被删除等异常
+                if (_resourceBox.Contains(go)) continue; // 二次校验，避免重复添加
+                // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+                RemoveStaleNullPlaceholderFor(go);
+                InsertToResourceBoxByType(go);
+                added.Add(go);
+            }
+
+            if (added.Count <= 0)
+            {
+                Debug.Log("[ResourceBox] 没有新的摄像机被加入资源箱");
+                if (Parent) Parent.ShowNotification(new GUIContent("没有新的摄像机被加入资源箱"));
+                return;
+            }
+
+            // 添加后直接选中新加入的摄像机（选中后再刷新资源箱高亮，保证资源箱同步显示选中态）
+            try
+            {
+                Selection.objects = added.ToArray();
+                EditorGUIUtility.PingObject(added[0]);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[ResourceBox] 选中摄像机失败: {e.Message}");
+            }
+
+            RebuildIndexMappings();
+            UpdateSelectedObjectsInResourceBox();
+            if (Parent) Parent.Repaint();
+            SaveResourceBox(false);
+
+            var summary = $"已添加 {added.Count} 个摄像机到资源箱";
+            if (skippedCount > 0) summary += $"（已存在跳过 {skippedCount} 个）";
+            Debug.Log($"[ResourceBox] {summary}");
+            // 完成提示不做模态弹窗：主窗口顶部气泡提示，不阻塞 Console
+            if (Parent) Parent.ShowNotification(new GUIContent(summary));
+        }
+
+        /// 在当前打开的场景中查找摄像机
+        /// scope：实际判定范围说明
+        private static List<Camera> FindCurrentSceneCameras(out string scope)
+        {
+            scope = "";
+            var result = new List<Camera>();
+
+            // 显式包含未激活对象，避免摄像机所在物体 activeSelf=false 时被漏掉
+            var allCameras = UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+            // ① 先在活动场景内查找
+            var activeScene = SceneManager.GetActiveScene();
+            bool activeSceneUsed = true;
+
+            foreach (var cam in allCameras)
+            {
+                if (cam == null) continue;
+                if (cam.gameObject.scene == activeScene) result.Add(cam);
+            }
+
+            // ② 活动场景没有摄像机时，退到其它已加载场景
+            if (result.Count == 0)
+            {
+                activeSceneUsed = false;
+                foreach (var cam in allCameras)
+                {
+                    if (cam == null) continue;
+                    var scene = cam.gameObject.scene;
+                    if (!scene.IsValid() || !scene.isLoaded) continue;
+                    if (scene == activeScene) continue;
+                    result.Add(cam);
+                }
+            }
+
+            scope = activeSceneUsed
+                ? $"活动场景「{activeScene.name}」"
+                : "全部已加载场景（活动场景内无摄像机）";
+
+            return result;
+        }
+
+        /// 摄像机类型转中文说明
+        private static string GetCameraTypeText(Camera cam)
+        {
+            switch (cam.cameraType)
+            {
+                case CameraType.Game: return "普通摄像机";
+                case CameraType.SceneView: return "场景视图";
+                case CameraType.Preview: return "预览";
+                case CameraType.Reflection: return "反射/探针";
+                case CameraType.VR: return "VR";
+                default: return cam.cameraType.ToString();
+            }
         }
 
         /// 颜色转 #RRGGBB 文本（用于清单展示）
@@ -2956,22 +3198,53 @@ public class ResourceBoxRecoveryItem
                 items.Add(new VicToolsListConfirmWindow.Item(line, asset));
             }
 
-            var summary = $"渲染管线配置：{candidates.Count} 个" +
-                          $"\n管线资产 {pipelineAssetCount} 个 / 渲染器数据 {rendererDataCount} 个";
-            if (disabledCount > 0) summary += $"\n未启用：{disabledCount} 个";
-            if (alreadyInBox > 0) summary += $"\n已在资源箱（跳过）：{alreadyInBox} 个";
+            // 待添加列表:只含"尚未入箱、批量操作会写入"的候选资产
+            // 单项添加成功后从中移除 → 待添加数量递减
+            var pendingAssets = new List<Object>();
+            foreach (var asset in candidates)
+            {
+                if (!asset) continue;
+                if (!_resourceBox.Contains(asset)) pendingAssets.Add(asset);
+            }
+
+            var summary = BuildRenderPipelineSummary(
+                candidates.Count, pendingAssets.Count, pipelineAssetCount, rendererDataCount, disabledCount, alreadyInBox);
 
             int capturedSkipped = alreadyInBox;
-            int willAdd = candidates.Count - alreadyInBox;
 
             // 公共窗口（Vic.Editor.VicToolsListConfirmWindow）：非模态，用户确认后才执行添加
+            // onAddSingle：单项添加后从 pendingAssets 移除 → 待添加数量递减
+            // dynamicStateProvider：每次绘制重新求值，概要与【确定添加（N）】实时递减
+            // 注：批量写入仍传 candidates 全量，内部二次校验会跳过已单独添加的（不会重复入箱）
             VicToolsListConfirmWindow.Show(
                 "添加渲染管线配置",
                 summary,
                 items,
                 () => AddRenderPipelineConfigsToResourceBox(candidates, capturedSkipped),
-                $"确定添加（{willAdd}）",
-                () => Debug.Log("[ResourceBox] 已取消添加渲染管线配置"));
+                $"确定添加（{pendingAssets.Count}）",
+                () => Debug.Log("[ResourceBox] 已取消添加渲染管线配置"),
+                obj => AddSingleAndRemove(obj, pendingAssets),
+                () => new VicToolsListConfirmWindow.DynamicState
+                {
+                    Summary = BuildRenderPipelineSummary(
+                        candidates.Count, pendingAssets.Count, pipelineAssetCount, rendererDataCount, disabledCount, alreadyInBox),
+                    ConfirmButtonText = $"确定添加（{pendingAssets.Count}）",
+                    ConfirmDisabled = pendingAssets.Count <= 0,
+                });
+        }
+
+        /// 组装"添加渲染管线配置"确认窗口的概要文字
+        /// <remarks>单项添加会移除待添加列表内容,故每次绘制重新调用以保持数量准确。</remarks>
+        private static string BuildRenderPipelineSummary(
+            int totalCount, int pendingCount, int pipelineAssetCount, int rendererDataCount,
+            int disabledCount, int skippedCount)
+        {
+            var s = $"渲染管线配置：{totalCount} 个" +
+                    $"\n管线资产 {pipelineAssetCount} 个 / 渲染器数据 {rendererDataCount} 个";
+            if (disabledCount > 0) s += $"\n未启用：{disabledCount} 个";
+            if (skippedCount > 0) s += $"\n已在资源箱（跳过）：{skippedCount} 个";
+            if (pendingCount <= 0) s += "\n全部已在资源箱，无需新增";
+            return s;
         }
 
         /// 把确认后的渲染管线配置写入资源箱（由公共确认窗口的【确定添加】按钮回调）
@@ -2984,6 +3257,8 @@ public class ResourceBoxRecoveryItem
             {
                 if (!asset) continue;                     // 资源被删除等异常
                 if (_resourceBox.Contains(asset)) continue; // 二次校验，避免重复添加
+                // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+                RemoveStaleNullPlaceholderFor(asset);
                 InsertToResourceBoxByType(asset);
                 addedCount++;
             }
@@ -3637,6 +3912,8 @@ public class ResourceBoxRecoveryItem
             }
 
             // 将材质按类型排序添加到资源箱
+            // v3.7：先把同名的灰色占位清掉，避免出现"同名灰色 + 同名有效"两行并存
+            RemoveStaleNullPlaceholderFor(materialToAdd);
             InsertToResourceBoxByType(materialToAdd);
             
             // 强制重绘窗口
@@ -3681,15 +3958,11 @@ public class ResourceBoxRecoveryItem
                 Debug.Log($"已清除材质 {materialToAdd.name} 的DontSaveInEditor标志");
             }
 
-            // 将材质添加到资源箱
-            _resourceBox.Add(materialToAdd);
-            
-            // 计算并保存displayName到字典
-            var parentName = GetTopLevelParentName(materialToAdd);
-            var displayName = !string.IsNullOrEmpty(parentName)
-                ? $"<{GetTypeDisplayName(materialToAdd)}> [{parentName}]← {materialToAdd.name}"
-                : $"<{GetTypeDisplayName(materialToAdd)}> {materialToAdd.name}";
-            _resourceBoxDisplayNames[materialToAdd] = displayName;
+            // v3.7：走统一插入路径，避免直接 _resourceBox.Add 导致并行表（_recoveryRawItems）长度与列表不一致，
+            // 以及残留"同名灰色占位 + 同名有效材质"两行并存。
+            RemoveStaleNullPlaceholderFor(materialToAdd);
+            InsertToResourceBoxByType(materialToAdd);
+            RebuildIndexMappings();
             
             // 强制重绘窗口
             if (Parent)
@@ -3773,6 +4046,11 @@ public class ResourceBoxRecoveryItem
 
             // 创建资源箱数据列表，保存所有对象（包括null对象）
             var resourceBoxData = new List<ResourceBoxItem>();
+            // v3.7：与 _resourceBox 严格一一对应的原始条目表。
+            // 旧实现用 ConvertToRecoveryList(resourceBoxData) 反推，被"跳过保存"的条目（HideAndDontSave）
+            // 会让该表与 _resourceBox 下标错位 → 之后按索引取 type/name/guid 会取到别的对象的数据
+            // → 存档后出现"displayName 属于 A、guid 属于 B"的杂交条目 → 加载出重名的灰色成员。
+            var alignedRawItems = new List<ResourceBoxRecoveryItem>();
             
             if (_resourceBox != null)
             {
@@ -3787,6 +4065,8 @@ public class ResourceBoxRecoveryItem
                         if ((obj.hideFlags & HideFlags.HideAndDontSave) == HideFlags.HideAndDontSave)
                         {
                             Debug.LogWarning($"对象 {obj.name} 具有HideAndDontSave标志，跳过保存");
+                            // 占位，保持与 _resourceBox 的下标一一对应
+                            alignedRawItems.Add(null);
                             continue;
                         }
 
@@ -3854,7 +4134,7 @@ public class ResourceBoxRecoveryItem
                             ? $"<{GetTypeDisplayName(obj)}> [{parentName}]← {obj.name}"
                             : $"<{GetTypeDisplayName(obj)}> {obj.name}";
 
-                        resourceBoxData.Add(new ResourceBoxItem
+                        var savedItem = new ResourceBoxItem
                         {
                             guid = guid,
                             type = obj.GetType().FullName,
@@ -3864,49 +4144,79 @@ public class ResourceBoxRecoveryItem
                             scenePath = scenePath,
                             sceneName = sceneName,
                             sceneGuid = sceneGuid
-                        });
+                        };
+                        resourceBoxData.Add(savedItem);
+                        alignedRawItems.Add(ConvertToRecoveryItem(savedItem));
                     }
                     else
                     {
-                        // 处理null对象
-                        // 尝试从null对象字典中获取displayName
+                        // ---------- 处理 null 对象（灰色占位） ----------
+                        // v3.7 修复【同名同类型灰色对象】：
+                        //   旧实现 displayName 取自 _nullObjectDisplayNames[i]（列表位），
+                        //   而 type/name/guid 取自 _nullObjectRawItems[i] / _recoveryRawItems[i]（存档位）。
+                        //   只要"列表位"与"存档位"错位（加载跳过重复项 / 插入 / 排序 / 删除 / 重建索引映射），
+                        //   就会写出"displayName 属于 A、guid 与 name 属于 B"的杂交条目：
+                        //   该条目下次加载时 guid 解析不出对象 → 变成灰色占位，
+                        //   而它的 displayName 又与列表里真实有效的同名对象完全一致 → 出现"重名的灰色成员"。
+                        //   现在统一以 displayName（用户唯一可见的真相）为基准，
+                        //   并校验 guid 是否真的指向该对象，不匹配就归一为 NULL:OBJECT。
                         string displayName;
-                        // v2.43: 同时从 raw 缓存取 type/name，用于持久化到 JSON 的 ResourceBoxItem.type/name 字段，
-                        // 避免下次加载读不到任何信息（之前只用 _nullObjectDisplayNames 的旧 displayName，丢了结构化数据）
                         string nullType = null;
                         string nullName = null;
                         string scenePath = "";
                         string sceneName = "";
                         string sceneGuid = "";
-                        if (_nullObjectDisplayNames.TryGetValue(i, out string savedDisplayName))
+                        string nullObjectGuid = "NULL:OBJECT";
+                        bool savedIsAsset = false;
+
+                        // ① 取该槽位自己的原始快照（_nullObjectRawItems / _recoveryRawItems 都是索引键，取先命中者）
+                        _nullObjectRawItems.TryGetValue(i, out var slotRaw);
+                        if (slotRaw == null && _recoveryRawItems != null && i < _recoveryRawItems.Count)
+                        {
+                            slotRaw = _recoveryRawItems[i];
+                        }
+
+                        // ② displayName：优先用缓存；缺失时用 raw 的 type/name 重建
+                        if (_nullObjectDisplayNames.TryGetValue(i, out string savedDisplayName) && !string.IsNullOrEmpty(savedDisplayName))
                         {
                             displayName = savedDisplayName;
                         }
+                        else if (slotRaw != null)
+                        {
+                            displayName = BuildFallbackDisplayName(slotRaw.type, slotRaw.name);
+                        }
                         else
                         {
-                            // 没有保存的displayName：优先用 _nullObjectRawItems / _recoveryRawItems 的 type/name 重建
-                            if (_nullObjectRawItems.TryGetValue(i, out var rawItem) && rawItem != null)
-                            {
-                                nullType = rawItem.type;
-                                nullName = rawItem.name;
-                            }
-                            else if (_recoveryRawItems != null && i < _recoveryRawItems.Count && _recoveryRawItems[i] != null)
-                            {
-                                nullType = _recoveryRawItems[i].type;
-                                nullName = _recoveryRawItems[i].name;
-                            }
-                            displayName = BuildFallbackDisplayName(nullType, nullName);
+                            displayName = BuildFallbackDisplayName(null, null);
                         }
-                        // 与正常路径一致：保存时把 raw 的 type/name 写入 ResourceBoxItem，让下次加载能恢复结构化信息
-                        if (nullType == null && nullName == null)
+
+                        // ③ 从 displayName 解析类型标签与对象名，作为自洽性校验基准
+                        var (dnType, _) = ExtractTypeAndSourceFromDisplayName(displayName);
+                        string dnName = ExtractOriginalNameFromDisplayName(displayName);
+
+                        // ④ type/name：类型沿用 raw 的完整名（保留 UnityEditor.SceneAsset 这类信息），名字以 displayName 为准
+                        if (slotRaw != null && !string.IsNullOrEmpty(dnType) &&
+                            string.Equals(NormalizeTypeName(slotRaw.type), NormalizeTypeName(dnType), StringComparison.Ordinal))
                         {
-                            if (_nullObjectRawItems.TryGetValue(i, out var rawItem2) && rawItem2 != null)
+                            nullType = slotRaw.type;
+                        }
+                        if (string.IsNullOrEmpty(nullType)) nullType = dnType;
+                        nullName = !string.IsNullOrEmpty(dnName) ? dnName : (slotRaw != null ? slotRaw.name : null);
+
+                        // ⑤ guid：资产 GUID 必须确实指向 displayName 描述的那个对象，否则归一为 NULL:OBJECT
+                        if (slotRaw != null && !string.IsNullOrEmpty(slotRaw.guid) && slotRaw.guid != "NULL:OBJECT")
+                        {
+                            bool isSceneIdentifier = slotRaw.guid.StartsWith("ROOT:") || slotRaw.guid.StartsWith("SCENE:") ||
+                                                    slotRaw.guid.StartsWith("INSTANCE:") || slotRaw.guid.StartsWith("GLOBALID:");
+                            if (isSceneIdentifier)
                             {
-                                nullType = rawItem2.type; nullName = rawItem2.name;
+                                nullObjectGuid = slotRaw.guid;
                             }
-                            else if (_recoveryRawItems != null && i < _recoveryRawItems.Count && _recoveryRawItems[i] != null)
+                            else if (IsNullSlotGuidMatch(slotRaw.guid, dnType, dnName))
                             {
-                                nullType = _recoveryRawItems[i].type; nullName = _recoveryRawItems[i].name;
+                                nullObjectGuid = slotRaw.guid;
+                                // 资产型灰色项保持 isAsset=true：下次加载走资产分支，资源一旦存在即可自动恢复成有效对象
+                                savedIsAsset = true;
                             }
                         }
 
@@ -3935,35 +4245,39 @@ public class ResourceBoxRecoveryItem
                             }
                         }
 
-                        // 对于null对象，使用特殊的标识符
-                        // v2.28: 优先从 _nullObjectRawItems 恢复原始场景信息和原始 guid
-                        string nullObjectGuid = "NULL:OBJECT";
-                        if (_nullObjectRawItems.TryGetValue(i, out var nullRaw) && nullRaw != null)
+                        // ⑥ 场景信息兜底：仅在 raw 的名字与 displayName 一致时才采用，
+                        //    避免把"别的对象"的场景信息写进本条目（那会让恢复逻辑串到别的对象上）
+                        if (slotRaw != null && string.IsNullOrEmpty(sceneGuid) &&
+                            string.Equals(slotRaw.name ?? "", nullName ?? "", StringComparison.Ordinal))
                         {
-                            if (string.IsNullOrEmpty(sceneGuid))
-                            {
-                                scenePath = nullRaw.scenePath ?? "";
-                                sceneName = nullRaw.sceneName ?? "";
-                                sceneGuid = nullRaw.sceneGuid ?? "";
-                            }
-                            if (!string.IsNullOrEmpty(nullRaw.guid))
-                            {
-                                nullObjectGuid = nullRaw.guid;
-                            }
+                            scenePath = slotRaw.scenePath ?? "";
+                            sceneName = slotRaw.sceneName ?? "";
+                            sceneGuid = slotRaw.sceneGuid ?? "";
                         }
                         // v2.43 修复：之前硬编码 type="System.Null" / name="NullObject"，
-// 即使 _nullObjectRawItems / _recoveryRawItems 里有真实类型/名称（GameObject Cube 等）也会被覆盖，
-// 下次加载时拿到的是无意义的 "System.Null" / "NullObject"，按类型排序、恢复、显示全部失效。
-// 改为：有 raw 时用 raw 的真实 type/name；都没有才回退到旧占位。
-string savedType = !string.IsNullOrEmpty(nullType) ? nullType : "System.Null";
-string savedName = !string.IsNullOrEmpty(nullName) ? nullName : "NullObject";
-resourceBoxData.Add(new ResourceBoxItem
+                        // 即使 _nullObjectRawItems / _recoveryRawItems 里有真实类型/名称（GameObject Cube 等）也会被覆盖，
+                        // 下次加载时拿到的是无意义的 "System.Null" / "NullObject"，按类型排序、恢复、显示全部失效。
+                        // 改为：有 raw 时用 raw 的真实 type/name；都没有才回退到旧占位。
+                        string savedType = !string.IsNullOrEmpty(nullType) ? nullType : "System.Null";
+                        string savedName = !string.IsNullOrEmpty(nullName) ? nullName : "NullObject";
+                        resourceBoxData.Add(new ResourceBoxItem
                         {
                             guid = nullObjectGuid,
                             type = savedType,
                             name = savedName,
-                            isAsset = false,
+                            // v3.7：资产型灰色项保持 isAsset=true，下次加载走资产分支，资源存在即可自动恢复
+                            isAsset = savedIsAsset,
                             displayName = displayName,
+                            scenePath = scenePath,
+                            sceneName = sceneName,
+                            sceneGuid = sceneGuid
+                        });
+                        alignedRawItems.Add(new ResourceBoxRecoveryItem
+                        {
+                            guid = nullObjectGuid,
+                            type = savedType,
+                            name = savedName,
+                            isAsset = savedIsAsset,
                             scenePath = scenePath,
                             sceneName = sceneName,
                             sceneGuid = sceneGuid
@@ -3977,8 +4291,8 @@ resourceBoxData.Add(new ResourceBoxItem
                 items = resourceBoxData
             });
 
-            // v2.28: 同步 _recoveryRawItems，确保后续场景事件能正确恢复
-            _recoveryRawItems = ConvertToRecoveryList(resourceBoxData);
+            // v3.7：_recoveryRawItems 与 _resourceBox 严格一一对应（保证按索引取原始数据时不会串位）
+            _recoveryRawItems = alignedRawItems;
 
             // 保存到全局文件
             SaveResourceBoxToGlobalFile(jsonData);
@@ -4068,6 +4382,8 @@ resourceBoxData.Add(new ResourceBoxItem
                 _recoveryRawItems = null; // v2.28 重置恢复缓存
                 var hasSceneObjectChanges = false; // 标记是否有场景对象变化
                 var hasDataInconsistency = false; // 标记数据不一致（用于内部逻辑）
+                // v3.7：与 _resourceBox 严格一一对应的原始条目表（只收录真正进入列表的条目）
+                var alignedRawItems = new List<ResourceBoxRecoveryItem>();
 
                 if (resourceBoxData.items != null)
                 {
@@ -4313,6 +4629,7 @@ resourceBoxData.Add(new ResourceBoxItem
                             {
                                 Debug.LogWarning($"✗ 对象已存在于资源箱中，跳过重复添加: {obj.name}");
                                 hasDataInconsistency = true;
+                                // v3.7：跳过时不能写入 alignedRawItems，否则与 _resourceBox 的下标会错位
                                 continue;
                             }
                             
@@ -4320,6 +4637,8 @@ resourceBoxData.Add(new ResourceBoxItem
                             if (obj && !obj.Equals(null))
                             {
                                 _resourceBox.Add(obj);
+                                // v3.7：并行记录原始条目，保证 _recoveryRawItems[i] 与 _resourceBox[i] 始终指向同一个条目
+                                alignedRawItems.Add(ConvertToRecoveryItem(item));
                                 
                                 // 保存displayName到字典（如果ResourceBoxItem中有displayName字段）
                                 if (!string.IsNullOrEmpty(item.displayName))
@@ -4337,19 +4656,30 @@ resourceBoxData.Add(new ResourceBoxItem
                         else
                         {
                             // 对象为null，但仍然添加到资源箱以便显示
+                            int nullSlotIndex = _resourceBox.Count; // 即将占用的索引
                             _resourceBox.Add(null);
+                            alignedRawItems.Add(ConvertToRecoveryItem(item));
                             hasDataInconsistency = true;
                             
                             // 保存displayName到null对象字典，使用当前索引作为键
                             if (!string.IsNullOrEmpty(item.displayName))
                             {
-                                _nullObjectDisplayNames[_resourceBox.Count - 1] = item.displayName;
+                                _nullObjectDisplayNames[nullSlotIndex] = item.displayName;
                             }
                             else
                             {
                                 // v2.43: 用 BuildFallbackDisplayName 统一兜底，保留 item.type（v2.41 起 ResourceBoxFileItem.type 已是字段），
                                 // 让 null 对象按真实类型参与排序/恢复，不再硬编码"<未知类型> {item.name}"。
-                                _nullObjectDisplayNames[_resourceBox.Count - 1] = BuildFallbackDisplayName(item.type, item.name);
+                                _nullObjectDisplayNames[nullSlotIndex] = BuildFallbackDisplayName(item.type, item.name);
+                            }
+
+                            // v3.7：缓存该槽位的原始条目。
+                            // 之前只有"NULL:OBJECT 且带场景信息"的条目会被缓存，
+                            // 于是"资产型灰色项"（GUID 有效但资源当时没加载出来）丢失了恢复依据，
+                            // 只能在列表里一直灰着、还被反复写回存档 → 同名灰色成员。
+                            if (!_nullObjectRawItems.ContainsKey(nullSlotIndex))
+                            {
+                                _nullObjectRawItems[nullSlotIndex] = ConvertToRecoveryItem(item);
                             }
                             
                             // Debug.LogWarning($"✗ 无法加载对象，但保留显示名称: {debugInfo}");
@@ -4359,14 +4689,20 @@ resourceBoxData.Add(new ResourceBoxItem
 
                 // Debug.Log($"资源箱数据已加载，成功恢复 {loadedCount} 个对象");
 
-                // v2.28: 设置 _recoveryRawItems 为当前加载的 items，便于场景打开时直接恢复
-                _recoveryRawItems = ConvertToRecoveryList(resourceBoxData.items);
+                // v3.7：_recoveryRawItems 必须是与 _resourceBox 严格一一对应的并行表。
+                // 旧实现用 ConvertToRecoveryList(resourceBoxData.items)（包含被跳过的重复项），
+                // 与 _resourceBox 的下标错位 → 之后按索引取 type/name/guid 会取到别的对象的数据，
+                // 存档后就是"displayName 属于 A、guid 与 name 属于 B"的杂交条目 → 加载出重名的灰色成员。
+                _recoveryRawItems = alignedRawItems;
+
+                // v3.7：清理"与有效对象同名同类型"的灰色占位（历史存档里的重复项在这里自愈）
+                bool removedDuplicatePlaceholders = RemoveDuplicateNullPlaceholders();
 
                 // 检查是否有场景对象变化，如果有则自动保存更新数据
                 // 注意：仅在成功恢复了对象时才保存，避免将null状态覆盖已保存的有效数据
-                if (hasSceneObjectChanges)
+                if (hasSceneObjectChanges || removedDuplicatePlaceholders)
                 {
-                    Debug.Log($"检测到场景对象标识符变化，自动更新资源箱数据...");
+                    Debug.Log($"检测到场景对象标识符变化或重复灰色占位，自动更新资源箱数据...");
                     SaveResourceBox(false);
                 }
                 else if (hasDataInconsistency)
@@ -5163,6 +5499,8 @@ resourceBoxData.Add(new ResourceBoxItem
                 var loadedCount = 0;
                 var failedCount = 0;
                 var hasSceneObjectChanges = false; // 标记是否有场景对象变化
+                // v3.7：与 _resourceBox 严格一一对应的原始条目表（只收录真正进入列表的条目）
+                var alignedRawItems = new List<ResourceBoxRecoveryItem>();
 
                 Debug.Log($"开始从文件加载资源箱数据: {fileName}.json，包含 {fileData.items.Count} 个项目");
 
@@ -5315,12 +5653,16 @@ resourceBoxData.Add(new ResourceBoxItem
                         }
 
                         // v2.28: 对于 null 对象，缓存原始 item 用于场景重载后恢复
-                        if (obj == null && !item.isAsset &&
-                            (!string.IsNullOrEmpty(item.sceneGuid) || !string.IsNullOrEmpty(item.sceneName)))
+                        // v3.7: 不再要求"必须带场景信息"——资产型灰色项（GUID 有效但资源当时没加载出来）
+                        // 同样需要保留原始条目，否则它既无法自愈，又会被写回存档形成重名灰色成员。
+                        if (obj == null)
                         {
                             // 构造一个轻量快照项（沿用 item 的字段）放入 _nullObjectRawItems
                             int cacheIdx = _resourceBox.Count; // 即将被添加的索引
-                            _nullObjectRawItems[cacheIdx] = ConvertToRecoveryItem(item);
+                            if (!_nullObjectRawItems.ContainsKey(cacheIdx))
+                            {
+                                _nullObjectRawItems[cacheIdx] = ConvertToRecoveryItem(item);
+                            }
                         }
 
                     // 即使对象为null，也添加到资源箱，以便显示对象名称
@@ -5333,6 +5675,7 @@ resourceBoxData.Add(new ResourceBoxItem
                         }
                         
                         _resourceBox.Add(obj);
+                        alignedRawItems.Add(ConvertToRecoveryItem(item));
                         loadedCount++;
                         
                         // 保存displayName到字典（如果ResourceBoxFileItem中有displayName字段）
@@ -5344,19 +5687,21 @@ resourceBoxData.Add(new ResourceBoxItem
                     else
                     {
                         // 对象为null，但仍然添加到资源箱以便显示
+                        int nullSlotIndex = _resourceBox.Count; // 即将占用的索引
                         _resourceBox.Add(null);
+                        alignedRawItems.Add(ConvertToRecoveryItem(item));
                         failedCount++;
                         
                         // 保存displayName到null对象字典，使用当前索引作为键
                         if (!string.IsNullOrEmpty(item.displayName))
                         {
-                            _nullObjectDisplayNames[_resourceBox.Count - 1] = item.displayName;
+                            _nullObjectDisplayNames[nullSlotIndex] = item.displayName;
                         }
                         else
                         {
                             // v2.43: 用 BuildFallbackDisplayName 统一兜底，保留 item.type（v2.41 起 ResourceBoxFileItem.type 已是字段），
                             // 让 null 对象按真实类型参与排序/恢复，不再硬编码"<未知类型> {item.name}"。
-                            _nullObjectDisplayNames[_resourceBox.Count - 1] = BuildFallbackDisplayName(item.type, item.name);
+                            _nullObjectDisplayNames[nullSlotIndex] = BuildFallbackDisplayName(item.type, item.name);
                         }
                         
                         // Debug.LogWarning($"[{i+1}/{fileData.items.Count}] ✗ 无法加载对象，但保留显示名称: {debugInfo}");
@@ -5368,7 +5713,11 @@ resourceBoxData.Add(new ResourceBoxItem
                 Debug.Log($"从文件加载资源箱数据完成: {fileName}.json (成功: {loadedCount}, 失败: {failedCount}, 总计: {fileData.items.Count})");
 
                 // v2.28: 设置 _recoveryRawItems 用于场景打开时恢复
-                _recoveryRawItems = ConvertToRecoveryList(fileData.items);
+                // v3.7：_recoveryRawItems 与 _resourceBox 严格一一对应（见 LoadResourceBox 同处说明）
+                _recoveryRawItems = alignedRawItems;
+
+                // v3.7：清理"与有效对象同名同类型"的灰色占位（历史存档里的重复项在这里自愈）
+                RemoveDuplicateNullPlaceholders();
                 
                 // 检查是否有场景对象变化，如果有则自动保存更新数据
                 if (hasSceneObjectChanges)
@@ -5440,12 +5789,25 @@ resourceBoxData.Add(new ResourceBoxItem
                     // 尝试从null对象字典中获取保存的displayName
                     if (_nullObjectDisplayNames.TryGetValue(i, out string savedDisplayName))
                     {
-                        // v3.2 修复：与第二层 TryRecoverNullItemsBySceneInfo:457 对齐，资产型 null 项直接跳过
-                        // 不走 GameObject 全场景按名搜。否则 UniversalRenderData 这类 ScriptableObject 资产
-                        // （isAsset=true）丢失变 null 后，按 "Mobile_Renderer" 名字会命中第一个同名 GameObject，
-                        // 误恢复成 GameObject，产生"同名同类型灰色对象"现象。
+                        // v3.2 修复：与第二层 TryRecoverNullItemsBySceneInfo:457 对齐，资产型 null 项不走 GameObject 全场景按名搜。
+                        // 否则 UniversalRenderData 这类 ScriptableObject 资产（isAsset=true）丢失变 null 后，
+                        // 按 "Mobile_Renderer" 名字会命中第一个同名 GameObject，误恢复成 GameObject，
+                        // 产生"同名同类型灰色对象"现象。
+                        // v3.7 修复：资产型 null 项改为"按 GUID 精确恢复"——GUID 才是资产身份的唯一依据。
+                        // 恢复成功后灰色占位直接变成有效对象（场景文件资源也能自动恢复），
+                        // 从根上消除"同名灰色占位 + 同名有效对象"并存的现象。
                         if (_nullObjectRawItems.TryGetValue(i, out var rawForCheck) && rawForCheck != null && rawForCheck.isAsset)
                         {
+                            if (TryReloadAssetForNullSlot(rawForCheck, out var reloadedAsset))
+                            {
+                                _resourceBox[i] = reloadedAsset;
+                                _resourceBoxDisplayNames[reloadedAsset] = savedDisplayName;
+                                _nullObjectDisplayNames.Remove(i);
+                                _nullObjectRawItems.Remove(i);
+                                hasChanges = true;
+                            }
+                            // 资产暂时还加载不出来（资源被删除/尚未导入）时保持灰色占位，
+                            // 但 raw 里的 GUID 仍然保留，资源回来后可以再次自动恢复
                             continue;
                         }
 
@@ -5494,11 +5856,8 @@ resourceBoxData.Add(new ResourceBoxItem
                             if (_resourceBox.Contains(foundObject))
                             {
                                 // 对象已存在于资源箱中，不重复添加，直接移除这个null条目
-                                _resourceBox.RemoveAt(i);
-                                _nullObjectDisplayNames.Remove(i);
-                                
-                                // 重建索引映射
-                                RebuildNullDisplayNameIndices(i);
+                                // v3.7：统一走 RemoveResourceBoxSlotAt，保证列表与所有索引表同步位移
+                                RemoveResourceBoxSlotAt(i);
                                 
                                 hasChanges = true;
                                 i--; // 调整索引，因为列表缩短了
@@ -5567,24 +5926,279 @@ resourceBoxData.Add(new ResourceBoxItem
         }
 
         /// v2.28: 按当前 _resourceBox 顺序重建 _nullObjectRawItems 索引（用于按类型排序等场景）
+        /// v3.7 修复：旧实现假设 "_recoveryRawItems 已经是当前 null 项的原始列表"，
+        ///   实际 _recoveryRawItems 是与 _resourceBox 一一对应的并行表（含有效对象占位），
+        ///   于是第 k 个 null 槽位拿到的是"第 k 个条目"而不是"第 k 个 null 条目"的 raw → type/name/guid 串位，
+        ///   存档后就表现为"重名的灰色对象"。改为按下标直接对齐取用，并优先沿用该槽位自己缓存的 raw。
         private void RebuildNullObjectRawItemsIndex()
         {
+            var cached = new Dictionary<int, ResourceBoxRecoveryItem>(_nullObjectRawItems);
             _nullObjectRawItems.Clear();
-            // 排序后原键错位，需要从 _recoveryRawItems 重新匹配位置
-            // _recoveryRawItems 已经是当前 null 项的原始列表
             if (_recoveryRawItems == null) return;
-            int rawIdx = 0;
             for (int i = 0; i < _resourceBox.Count; i++)
             {
-                if (!_resourceBox[i])
+                if (_resourceBox[i]) continue; // 有效对象不需要 raw
+                if (cached.TryGetValue(i, out var cachedRaw) && cachedRaw != null)
                 {
-                    if (rawIdx < _recoveryRawItems.Count)
-                    {
-                        _nullObjectRawItems[i] = _recoveryRawItems[rawIdx];
-                        rawIdx++;
-                    }
+                    _nullObjectRawItems[i] = cachedRaw;
+                    continue;
+                }
+                if (i < _recoveryRawItems.Count && _recoveryRawItems[i] != null)
+                {
+                    _nullObjectRawItems[i] = _recoveryRawItems[i];
                 }
             }
+        }
+
+        /// <summary>
+        /// v3.7 新增：判断 raw 快照与 displayName 描述的对象是否"同类型同名"（身份一致性校验）。
+        /// 用于识别"索引串位"产生的 raw —— 它的 type/name 其实属于列表里的另一个对象。
+        /// </summary>
+        private static bool IsNullSlotIdentityMatch(ResourceBoxRecoveryItem raw, string dispType, string dispName)
+        {
+            if (raw == null) return false;
+            if (!string.IsNullOrEmpty(dispType) &&
+                !string.Equals(NormalizeTypeName(raw.type), NormalizeTypeName(dispType), StringComparison.Ordinal))
+                return false;
+            if (!string.IsNullOrEmpty(dispName) &&
+                !string.Equals(raw.name ?? "", dispName, StringComparison.Ordinal))
+                return false;
+            return true;
+        }
+
+        /// <summary>
+        /// v3.7 新增：校验 guid 是否真的指向 displayName 描述的那个对象。
+        ///   · 资产 GUID：解析到资源且名字/类型一致才算匹配；
+        ///     资源当前不存在（被删除/尚未导入）时保留 GUID，资源回来后仍可自动恢复；
+        ///   · 场景对象标识符（ROOT:/SCENE:/INSTANCE:/GLOBALID:）：交由场景信息校验，视为匹配。
+        /// 不匹配说明该 guid 属于别的对象（索引串位），必须丢弃并归一为 NULL:OBJECT。
+        /// </summary>
+        private static bool IsNullSlotGuidMatch(string guid, string dispType, string dispName)
+        {
+            if (string.IsNullOrEmpty(guid) || guid == "NULL:OBJECT") return false;
+            if (guid.StartsWith("ROOT:") || guid.StartsWith("SCENE:") ||
+                guid.StartsWith("INSTANCE:") || guid.StartsWith("GLOBALID:")) return true;
+
+            var assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            if (string.IsNullOrEmpty(assetPath)) return true; // 资源当前不存在：保留 GUID
+            var asset = AssetDatabase.LoadAssetAtPath<Object>(assetPath);
+            if (!asset) return true;                          // 暂时加载不出来：保留 GUID
+
+            if (!string.IsNullOrEmpty(dispName) && !string.Equals(asset.name, dispName, StringComparison.Ordinal)) return false;
+            if (!string.IsNullOrEmpty(dispType) &&
+                !string.Equals(NormalizeTypeName(asset.GetType().FullName), NormalizeTypeName(dispType), StringComparison.Ordinal)) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// v3.7 新增：判断某个灰色槽位是否是"某个对象的同名同类型占位"。
+        /// 优先用 displayName 里的 (类型, 来源) 与对象比对；没有 displayName 时才退回 raw 快照的类型名。
+        /// </summary>
+        private bool IsNullSlotMatchingObject(int slotIndex, string objBaseType, string objSourceTag, string objName)
+        {
+            if (_nullObjectDisplayNames.TryGetValue(slotIndex, out var dn) && !string.IsNullOrEmpty(dn))
+            {
+                var (slotBaseType, slotSourceTag) = ExtractTypeAndSourceFromDisplayName(dn);
+                string slotName = ExtractOriginalNameFromDisplayName(dn);
+                if (string.IsNullOrEmpty(slotName)) return false;
+                if (!string.Equals(slotName, objName, StringComparison.Ordinal)) return false;
+                if (string.IsNullOrEmpty(slotBaseType)) return string.IsNullOrEmpty(objSourceTag);
+                if (!string.Equals(slotBaseType, objBaseType, StringComparison.Ordinal)) return false;
+                // 来源标签（Scene / Asset / Prefab / Instance）一致才算同一个对象
+                if (string.IsNullOrEmpty(slotSourceTag) || string.IsNullOrEmpty(objSourceTag)) return true;
+                return string.Equals(slotSourceTag, objSourceTag, StringComparison.Ordinal);
+            }
+
+            if (_nullObjectRawItems.TryGetValue(slotIndex, out var raw) && raw != null)
+            {
+                if (string.IsNullOrEmpty(raw.name)) return false;
+                if (!string.Equals(raw.name, objName, StringComparison.Ordinal)) return false;
+                if (string.IsNullOrEmpty(raw.type)) return true;
+                return string.Equals(NormalizeTypeName(raw.type), NormalizeTypeName(objBaseType), StringComparison.Ordinal);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// v3.7 新增：添加有效对象前，清理列表里"与它同名同类型"的灰色占位。
+        /// 灰色占位是对象曾经没被解析出来的历史残留；当同一个对象已经能正常加载时，
+        /// 那个占位就是纯冗余 —— 也就是用户看到的"重名的灰色成员"。
+        /// </summary>
+        private void RemoveStaleNullPlaceholderFor(Object obj)
+        {
+            if (!obj) return;
+            var (objBaseType, objSourceTag) = ParseTypeAndSource(obj);
+            string objName = obj.name;
+
+            bool removed = false;
+            for (int i = _resourceBox.Count - 1; i >= 0; i--)
+            {
+                if (_resourceBox[i]) continue; // 只处理灰色占位槽位
+                if (!IsNullSlotMatchingObject(i, objBaseType, objSourceTag, objName)) continue;
+                RemoveResourceBoxSlotAt(i);
+                removed = true;
+            }
+
+            if (removed)
+            {
+                Debug.Log($"[ResourceBox] 已移除与“{objName}”同名同类型的灰色占位项");
+            }
+        }
+
+        /// <summary>
+        /// v3.7 新增：按 GUID 精确恢复资产型 null 项（资源箱里变灰的场景文件/预制体/材质等）。
+        /// GUID 才是资产身份的唯一依据，按名字恢复只会命中同名的别的对象。
+        /// </summary>
+        private static bool TryReloadAssetForNullSlot(ResourceBoxRecoveryItem raw, out Object asset)
+        {
+            asset = null;
+            if (raw == null || !raw.isAsset) return false;
+            if (string.IsNullOrEmpty(raw.guid) || raw.guid == "NULL:OBJECT") return false;
+
+            var assetPath = AssetDatabase.GUIDToAssetPath(raw.guid);
+            if (string.IsNullOrEmpty(assetPath)) return false;
+
+            var loaded = AssetDatabase.LoadAssetAtPath<Object>(assetPath);
+            if (!loaded) return false;
+
+            // 名字/类型必须与原始记录一致，避免恢复到别的资源上
+            if (!IsNullSlotIdentityMatch(raw, loaded.GetType().FullName, loaded.name)) return false;
+
+            asset = loaded;
+            return true;
+        }
+
+        /// <summary>
+        /// v3.7 新增：把"以列表下标为键"的元数据表中所有 >= index 的键后移一位（插入用）。
+        /// 涉及 _nullObjectDisplayNames / _nullObjectRawItems / _resourceBoxInstanceIDs。
+        /// </summary>
+        private void ShiftIndexedMetadataUp(int index)
+        {
+            var tempNames = new Dictionary<int, string>();
+            foreach (var kvp in _nullObjectDisplayNames)
+            {
+                tempNames[kvp.Key >= index ? kvp.Key + 1 : kvp.Key] = kvp.Value;
+            }
+            _nullObjectDisplayNames.Clear();
+            foreach (var kvp in tempNames) _nullObjectDisplayNames[kvp.Key] = kvp.Value;
+
+            var tempRaws = new Dictionary<int, ResourceBoxRecoveryItem>();
+            foreach (var kvp in _nullObjectRawItems)
+            {
+                tempRaws[kvp.Key >= index ? kvp.Key + 1 : kvp.Key] = kvp.Value;
+            }
+            _nullObjectRawItems.Clear();
+            foreach (var kvp in tempRaws) _nullObjectRawItems[kvp.Key] = kvp.Value;
+
+            var tempIDs = new Dictionary<int, int>();
+            foreach (var kvp in _resourceBoxInstanceIDs)
+            {
+                tempIDs[kvp.Key >= index ? kvp.Key + 1 : kvp.Key] = kvp.Value;
+            }
+            _resourceBoxInstanceIDs.Clear();
+            foreach (var kvp in tempIDs) _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
+        }
+
+        /// <summary>
+        /// v3.7 新增：把"以列表下标为键"的元数据表中所有 > index 的键前移一位（删除用）。
+        /// </summary>
+        private void ShiftIndexedMetadataDown(int index)
+        {
+            var tempNames = new Dictionary<int, string>();
+            foreach (var kvp in _nullObjectDisplayNames)
+            {
+                if (kvp.Key < index) tempNames[kvp.Key] = kvp.Value;
+                else if (kvp.Key > index) tempNames[kvp.Key - 1] = kvp.Value;
+            }
+            _nullObjectDisplayNames.Clear();
+            foreach (var kvp in tempNames) _nullObjectDisplayNames[kvp.Key] = kvp.Value;
+
+            var tempRaws = new Dictionary<int, ResourceBoxRecoveryItem>();
+            foreach (var kvp in _nullObjectRawItems)
+            {
+                if (kvp.Key < index) tempRaws[kvp.Key] = kvp.Value;
+                else if (kvp.Key > index) tempRaws[kvp.Key - 1] = kvp.Value;
+            }
+            _nullObjectRawItems.Clear();
+            foreach (var kvp in tempRaws) _nullObjectRawItems[kvp.Key] = kvp.Value;
+
+            var tempIDs = new Dictionary<int, int>();
+            foreach (var kvp in _resourceBoxInstanceIDs)
+            {
+                if (kvp.Key < index) tempIDs[kvp.Key] = kvp.Value;
+                else if (kvp.Key > index) tempIDs[kvp.Key - 1] = kvp.Value;
+            }
+            _resourceBoxInstanceIDs.Clear();
+            foreach (var kvp in tempIDs) _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
+        }
+
+        /// <summary>
+        /// v3.7 新增：统一的槽位删除（列表 + 所有以索引为键的元数据表），
+        /// 保证任何删除都不会让索引表与列表错位。
+        /// </summary>
+        private void RemoveResourceBoxSlotAt(int index)
+        {
+            if (index < 0 || index >= _resourceBox.Count) return;
+            _resourceBox.RemoveAt(index);
+
+            // _recoveryRawItems 与 _resourceBox 一一对应，同步删除
+            if (_recoveryRawItems != null && index < _recoveryRawItems.Count)
+            {
+                _recoveryRawItems.RemoveAt(index);
+            }
+
+            ShiftIndexedMetadataDown(index);
+        }
+
+        /// <summary>
+        /// v3.7 新增：清理"与有效对象同名同类型"的灰色占位项。
+        /// 灰色占位是"曾经没解析出来"的历史残留；当列表里已经存在同名同类型的有效对象时，
+        /// 它就是纯冗余（也就是用户看到的"重名的灰色成员"），直接移除。
+        /// 返回 true 表示确实移除过灰色占位。
+        /// </summary>
+        private bool RemoveDuplicateNullPlaceholders()
+        {
+            bool changed = false;
+            for (int i = _resourceBox.Count - 1; i >= 0; i--)
+            {
+                if (_resourceBox[i]) continue; // 只处理灰色占位槽位
+
+                // 取该槽位的身份：优先用 displayName（用户可见的真相），其次用 raw 快照
+                string objName = null;
+                if (_nullObjectDisplayNames.TryGetValue(i, out var dn) && !string.IsNullOrEmpty(dn))
+                {
+                    objName = ExtractOriginalNameFromDisplayName(dn);
+                }
+                else if (_nullObjectRawItems.TryGetValue(i, out var raw) && raw != null)
+                {
+                    objName = raw.name;
+                }
+                if (string.IsNullOrEmpty(objName)) continue;
+
+                // 列表里是否已存在"同类型同名"的有效对象？
+                bool duplicated = false;
+                foreach (var obj in _resourceBox)
+                {
+                    if (!obj) continue;
+                    var (objBaseType, objSourceTag) = ParseTypeAndSource(obj);
+                    if (IsNullSlotMatchingObject(i, objBaseType, objSourceTag, obj.name))
+                    {
+                        duplicated = true;
+                        break;
+                    }
+                }
+                if (!duplicated) continue;
+
+                RemoveResourceBoxSlotAt(i);
+                changed = true;
+            }
+
+            if (changed)
+            {
+                Debug.Log("[ResourceBox] 已清理与有效对象同名同类型的灰色占位项");
+            }
+            return changed;
         }
 
         /// 在当前场景中按名称查找对象

@@ -38,12 +38,9 @@ using UnityEngine.SceneManagement;
 
 namespace Vic.Editor
 {
-    /// <summary>
     /// VicTools Editor 侧跨 Unity 版本 API 兼容层。
-    /// </summary>
     public static class VicToolsEditorCompat
     {
-        /// <summary>
         /// 把 <see cref="Vic.Runtime.VicToolsUnityCompat.GetReversibleId"/> 产出的 ID 换回对象。
         ///
         /// 对象已销毁 / ID 失效时返回 null。传入 0（空 ID）返回 null，不抛异常。
@@ -63,7 +60,6 @@ namespace Vic.Editor
         ///
         /// 若 Unity 后续连 FromULong 也废弃，则本方法签名需改为接收
         /// EntityId 本身（见 Runtime 侧 GetReversibleId 注释中的迁移方案）。
-        /// </summary>
         public static Object IdToObject(int id)
         {
             if (id == 0) return null;
@@ -75,7 +71,6 @@ namespace Vic.Editor
 #endif
         }
 
-        /// <summary>
         /// 取 <see cref="Scene"/> 的原始 handle 值，用于 HashSet / Dictionary 去重与比较。
         ///
         /// 返回 <see cref="ulong"/> 而非 int：Unity 6 的 <c>GetRawData()</c> 实际返回
@@ -88,7 +83,6 @@ namespace Vic.Editor
         /// GetRawData 是底层 64 位 handle 数据）。本方法只用于「单次调用内对已加载场景去重」，
         /// 只要<strong>同一版本内所有取值都经由本方法</strong>，混用就不会发生。
         /// 因此禁止把本方法结果与任何直接取自 <c>scene.handle</c> 的数值混存。
-        /// </summary>
         public static ulong GetSceneHandle(Scene scene)
         {
 #if UNITY_6000_5_OR_NEWER

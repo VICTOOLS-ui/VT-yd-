@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using UnityEditor;
 using Vic.Editor; // VicToolsIconLoader 等 Editor-only 公共工具
@@ -69,6 +70,7 @@ namespace VicTools
             
             // 主要功能部分
             DrawSection("包含工具模块", new string[] {
+                "• 批量复制 - 对场景对象创建多个副本，包含多种阵列模式，支持随机参数，支持实时预览",
                 "• 场景工具 - 场景编辑资源管理高效辅助工具",
                 "• 材质查找 - 高速查找和全局管理材质",
                 "• 资源工具 - 项目资源文件管理批量配置；安全的批量重命名（将保留资源引用）",
@@ -171,6 +173,13 @@ namespace VicTools
                     Changes = new List<string>(changes)
                 });
             }
+
+            Add("v3.0.1",
+                "修复Unity6版本兼容Bug（走兼容层取 ID，兼容 Unity 6000.4+ 下 `GetInstanceID` 被废弃的问题）。",
+                "【性能分析 v1.9】优化信息交互界面。",
+                "【场景工具 v3.7】修复资源箱里的对象加载后变灰、出现同名重复成员、保存后类型/名称/GUID 串位。",
+                "【场景工具 v3.6】资源箱新增【添加当前场景摄像机】按钮：一键扫描当前场景（活动场景优先，无则退到全部已加载场景）所有摄像机；优化弹窗列表窗口，支持单独添加（添加）按钮。"
+            );
 
             Add("v3.0.0 [全局兼容 Unity6 版本]",
                 "【场景工具 v3.5】资源箱新增【UnityLogo 图标】按钮，一键把项目中 Assets 目录下的所有场景（.unity / .scene）放入资源箱；。新增【渲染管线配置】按钮：扫描项目设置（GraphicsSettings/QualitySettings）引用的渲染管线资产、当前生效的默认/当前质量等级管线、项目内全部 RenderPipelineAsset 以及其引用的渲染器数据。新增【添加当前场景主光】按钮：按 URP 主光规则（平行光 + 优先 Sun Source + 强度×颜色最大分量）。",
@@ -532,12 +541,25 @@ namespace VicTools
                 margin = new RectOffset(0, 4, 2, 0)
             };
 
-            // 变更条目样式：灰色 + 缩进 + 自动换行 + 适当行距
+            // 变更条目样式：灰色 + 顶对齐 + 适当行距
+            // 关闭 wordWrap：正文由 WrapTextByChar 手动折行（Unity 自动换行只在空格处断，
+            // 遇到整段没有空格的中文会把行首留白、跳到很靠前的空格去断）
             GUIStyle changeStyle = new GUIStyle(EditorStyles.label)
             {
                 fontSize = 13,
-                wordWrap = true,
+                wordWrap = false,
                 normal = { textColor = new Color(0.78f, 0.78f, 0.78f) },
+                alignment = TextAnchor.UpperLeft,
+                margin = new RectOffset(0, 0, 1, 1)
+            };
+
+            // 项目符号样式：与正文同色，顶部对齐、不换行，独立成固定宽度标签（不参与正文换行）
+            GUIStyle bulletStyle = new GUIStyle(EditorStyles.label)
+            {
+                fontSize = 13,
+                wordWrap = false,
+                normal = { textColor = new Color(0.78f, 0.78f, 0.78f) },
+                alignment = TextAnchor.UpperLeft,
                 margin = new RectOffset(20, 0, 1, 1) // 左侧缩进 20 像素
             };
 
@@ -546,6 +568,11 @@ namespace VicTools
             separatorStyle.fixedHeight = 1;
             separatorStyle.normal.background = MakeTex(1, 1, new Color(0.3f, 0.3f, 0.3f, 0.4f));
             separatorStyle.margin = new RectOffset(0, 0, 6, 6);
+
+            // 正文可用宽度：手动折行需要知道每行能放多少像素
+            // （探针取当前布局可用宽度，再减掉左侧缩进 20 + 项目符号槽位 16 + 少量余量）
+            float contentWidth = GetAvailableWidth() - 20f - 16f - 4f;
+            if (contentWidth < 80f) contentWidth = 80f;
 
             for (int i = 0; i < history.Count; i++)
             {
@@ -563,8 +590,16 @@ namespace VicTools
                 foreach (var change in entry.Changes)
                 {
                     if (string.IsNullOrEmpty(change)) continue;
-                    // 项目符号统一为「·」，全角空格缩进与正文对齐
-                    EditorGUILayout.LabelField($"  ●  {change}", changeStyle);
+                    // 手动折行后逐行输出：断点由 WrapTextByChar 决定，不受空格影响
+                    var lines = WrapTextByChar(change, changeStyle, contentWidth);
+                    for (int li = 0; li < lines.Count; li++)
+                    {
+                        EditorGUILayout.BeginHorizontal();
+                        // 只有首行画项目符号，后续行留空占位，保证正文左边缘对齐
+                        GUILayout.Label(li == 0 ? "●" : "", bulletStyle, GUILayout.Width(16));
+                        GUILayout.Label(lines[li], changeStyle, GUILayout.ExpandWidth(true));
+                        EditorGUILayout.EndHorizontal();
+                    }
                 }
 
                 // 版本之间加分隔线（最后一条不加）
@@ -576,6 +611,185 @@ namespace VicTools
             }
         }
         
+        #region 版本信息正文折行（手动断行，绕开 Unity 自动换行只在空格处断的限制）
+
+        // 文本宽度缓存：按 (字体, 字号) 失效，避免每帧重复调用 CalcSize
+        private static readonly Dictionary<string, float> s_textWidthCache = new Dictionary<string, float>();
+        private static Font s_textWidthCacheFont;
+        private static int s_textWidthCacheFontSize = -1;
+
+        /// 取当前布局的可用宽度（手动折行用）
+        private static float GetAvailableWidth()
+        {
+            // 零高度、撑满宽度的探针：返回当前布局（滚动视图内容区）的可用宽度
+            Rect probe = GUILayoutUtility.GetRect(0f, 0f, GUILayout.ExpandWidth(true));
+            float w = probe.width;
+            // 兜底：窗口宽度 - helpBox 内外边距 - 垂直滚动条
+            if (w < 50f) w = EditorGUIUtility.currentViewWidth - 53f;
+            return w;
+        }
+
+        /// 量一个片段的像素宽度（带缓存）
+        private static float MeasureToken(GUIStyle style, string token)
+        {
+            if (string.IsNullOrEmpty(token)) return 0f;
+            if (style.font != s_textWidthCacheFont || style.fontSize != s_textWidthCacheFontSize)
+            {
+                s_textWidthCache.Clear();
+                s_textWidthCacheFont = style.font;
+                s_textWidthCacheFontSize = style.fontSize;
+            }
+            if (!s_textWidthCache.TryGetValue(token, out float w))
+            {
+                w = style.CalcSize(new GUIContent(token)).x;
+                s_textWidthCache[token] = w;
+            }
+            return w;
+        }
+
+        /// 是否中日韩字符（可在任意字符之间断行）
+        private static bool IsCjkChar(char c)
+        {
+            return (c >= '\u2E80' && c <= '\u9FFF')   // 部首扩展 ~ 中日韩统一表意文字
+                || (c >= '\u3000' && c <= '\u303F')   // 中日韩符号和标点
+                || (c >= '\uAC00' && c <= '\uD7AF')   // 谚文音节
+                || (c >= '\uF900' && c <= '\uFAFF')   // 兼容表意文字
+                || (c >= '\uFF00' && c <= '\uFFEF');  // 全角字符
+        }
+
+        /// 行首禁则：这些收尾标点不允许出现在行首
+        private static bool IsNoStartPunct(char c)
+        {
+            switch (c)
+            {
+                case '，': case '。': case '、': case '；': case '：':
+                case '？': case '！': case '）': case '】': case '》':
+                case '」': case '』': case '〉': case '］': case '｝':
+                case '〕': case '”': case '’': case '％': case '·':
+                case '…': case '—': case '～':
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// 行尾禁则：这些起始标点不允许留在行尾（要跟着下一行走）
+        private static bool IsNoEndPunct(char c)
+        {
+            switch (c)
+            {
+                case '（': case '【': case '《': case '「': case '『':
+                case '〈': case '［': case '｛': case '〔': case '“': case '‘':
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// 手动折行：在字符级挑选断点，而不是像 Unity 自动换行那样只在空格处断。
+        /// 规则：
+        ///   1. 中日韩字符可在任意字符之间断行，整行会被填满，不会跳到很靠前的空格去断；
+        ///   2. 英文 / 数字按整词处理，词内不断开（单词本身比整行还宽时才按字符强制断开）；
+        ///   3. 空格只是分隔符：放得下就留在行内，放不下就丢弃，绝不单独作为断行点；
+        ///   4. 简易禁则处理：行首不出现收尾标点，行尾不出现起始标点。
+        private static List<string> WrapTextByChar(string text, GUIStyle style, float maxWidth)
+        {
+            var lines = new List<string>();
+            if (string.IsNullOrEmpty(text)) return lines;
+            if (maxWidth <= 1f) { lines.Add(text); return lines; }
+
+            // 1) 切分成 token：CJK 单字成 token，英文数字整词成 token，空格单独标记
+            var tokens = new List<string>();
+            var latin = new StringBuilder();
+            foreach (char c in text)
+            {
+                if (char.IsWhiteSpace(c))
+                {
+                    if (latin.Length > 0) { tokens.Add(latin.ToString()); latin.Length = 0; }
+                    tokens.Add(" ");
+                }
+                else if (IsCjkChar(c))
+                {
+                    if (latin.Length > 0) { tokens.Add(latin.ToString()); latin.Length = 0; }
+                    tokens.Add(c.ToString());
+                }
+                else
+                {
+                    latin.Append(c);
+                }
+            }
+            if (latin.Length > 0) tokens.Add(latin.ToString());
+
+            // 2) 贪心填充：能放下就接在当前行，放不下再断行
+            var cur = new StringBuilder();
+            float curWidth = 0f;
+            bool pendingSpace = false;
+
+            foreach (var token in tokens)
+            {
+                if (token == " ") { pendingSpace = true; continue; }
+
+                float w = MeasureToken(style, token);
+
+                // 整个单词比一行还宽：强制按字符断开
+                if (cur.Length == 0 && w > maxWidth && token.Length > 1)
+                {
+                    foreach (char c in token)
+                    {
+                        float cw = MeasureToken(style, c.ToString());
+                        if (cur.Length > 0 && curWidth + cw > maxWidth)
+                        {
+                            lines.Add(cur.ToString());
+                            cur.Length = 0;
+                            curWidth = 0f;
+                        }
+                        cur.Append(c);
+                        curWidth += cw;
+                    }
+                    pendingSpace = false;
+                    continue;
+                }
+
+                float spaceW = (pendingSpace && cur.Length > 0) ? MeasureToken(style, " ") : 0f;
+                bool noStart = cur.Length > 0 && IsNoStartPunct(token[0]);
+
+                if (cur.Length > 0 && !noStart && curWidth + spaceW + w > maxWidth)
+                {
+                    // 断行：行尾空格直接丢弃
+                    string line = cur.ToString().TrimEnd();
+                    cur.Length = 0;
+                    curWidth = 0f;
+                    pendingSpace = false;
+                    spaceW = 0f;
+
+                    // 行尾禁则：起始标点跟着下一行走
+                    if (line.Length > 0 && IsNoEndPunct(line[line.Length - 1]))
+                    {
+                        char last = line[line.Length - 1];
+                        line = line.Substring(0, line.Length - 1);
+                        cur.Append(last);
+                        curWidth = MeasureToken(style, last.ToString());
+                    }
+                    lines.Add(line);
+                }
+
+                if (spaceW > 0f)
+                {
+                    cur.Append(' ');
+                    curWidth += spaceW;
+                }
+                pendingSpace = false;
+                cur.Append(token);
+                curWidth += w;
+            }
+
+            if (cur.Length > 0) lines.Add(cur.ToString().TrimEnd());
+            if (lines.Count == 0) lines.Add(text);
+            return lines;
+        }
+
+        #endregion
+
         private void DrawLinksSection()
         {
             
@@ -590,12 +804,12 @@ namespace VicTools
             GUIContent label = new GUIContent(EditorGUIUtility.IconContent("d_SocialNetworks.UDNOpen").image, "帮助文档");
             if (GUILayout.Button(label, new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(62), GUILayout.Height(20)))
             {
-                Application.OpenURL("https://nyq1lw99l7.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d?from=from_copylink");
+                Application.OpenURL("https://my.feishu.cn/wiki/TcWgwfvRviVsIRkTjT3coSpJnwh");
             }
             EditorGUILayout.Space(-18);
-            if (DrawLinkButton("帮助文档", "https://nyq1lw99l7.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d?from=from_copylink"))
+            if (DrawLinkButton("帮助文档", "https://my.feishu.cn/wiki/TcWgwfvRviVsIRkTjT3coSpJnwh"))
             {
-                Application.OpenURL("https://nyq1lw99l7.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d?from=from_copylink");
+                Application.OpenURL("https://my.feishu.cn/wiki/TcWgwfvRviVsIRkTjT3coSpJnwh");
             }
             
             EditorGUILayout.Space(20);

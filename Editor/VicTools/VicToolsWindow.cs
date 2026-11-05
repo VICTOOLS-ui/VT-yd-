@@ -8,6 +8,7 @@ using UnityEditor.SceneManagement;
 using System.Collections.Generic;
 using System.Linq;
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using Vic.Runtime;
 using Vic.Editor; // VicToolsIconLoader 等 Editor-only 公共工具
@@ -631,6 +632,8 @@ namespace VicTools
         private static readonly List<Texture2D> _ownedDropdownIcons = new List<Texture2D>();
         // 窗口标题栏图标(ShowWindow 中赋值给 window.titleContent),同样需要持引用 + 释放
         private static Texture2D _titleIcon;
+        // 标题栏图标资源路径：位于 Icons~ 目录(以 ~ 结尾的目录不会被 Unity 导入 AssetDatabase，只能从磁盘解码)
+        private const string TitleIconPath = "Packages/com.youdoo.victools/Editor/Icons~/wu.png";
 
         private SubWindow[] _windows;
         public SubWindow CurrentWindow;
@@ -642,7 +645,7 @@ namespace VicTools
         private Vector2 _previousWindowSize = Vector2.zero;
         private bool _isPerformanceAnalyzerActive;
         private Vector2 _performanceAnalyzerSize = new(497, 1132);   //性能分析器窗口大小
-        private Vector2 _normalWindowSize = new(497, 600);           //常规窗口默认尺寸
+        private Vector2 _normalWindowSize = new(520, 600);           //常规窗口默认尺寸
         private bool _needsWindowSizeUpdate;                          //标记需要更新窗口尺寸
         
         // 窗口配置界面显示状态
@@ -667,15 +670,40 @@ namespace VicTools
             // 走公共 VicToolsIconLoader 解码原始 PNG 字节 —— 强制 RGBA32 + readable,免受平台压缩 / isReadable=0 影响
             // 路径修正：scenestools-1.png 实际位于 Packages/com.youdoo.victools/Editor/Icons~/,
             //          原 Assets/Editor/Icons~/ 路径不存在,AssetDatabase.LoadAssetAtPath 静默返回 null
-            if (_titleIcon == null)
-            {
-                _titleIcon = VicToolsIconLoader.LoadPngIcon("Packages/com.youdoo.victools/Editor/Icons~/wu.png");
-                if (_titleIcon != null) _ownedDropdownIcons.Add(_titleIcon);
-            }
-            window.titleContent = new GUIContent($"VicTools(YD) {VicToolsConfig.Ver}", _titleIcon);
+            window.ApplyTitleContent();
             window.minSize = new Vector2(497, 400); // 最小宽度，最小高度
             window.maxSize = new Vector2(1200, 1700);    // 最大宽度，最大高度
             window.Show();
+        }
+
+        /// 确保标题栏图标贴图已加载（幂等）
+        /// <remarks>
+        /// 【为什么需要这个方法】Icons~ 目录以 ~ 结尾，Unity 不会把它导入 AssetDatabase，
+        /// 所以标题栏图标只能是运行时 new Texture2D + ImageConversion.LoadImage 解码出来的
+        /// 【非持久化】贴图（HideFlags.HideAndDontSave）。
+        /// 而 EditorWindow.titleContent 是 Unity 会序列化的属性：域重载 / 编辑器重启后，
+        /// 贴图被销毁，序列化里保存的引用变成"失效引用"（甚至会因实例 ID 被复用而指向别的贴图），
+        /// 于是标题栏图标就丢了 —— 这正是"必须打开一次『关于』窗口图标才会出现"的根因
+        /// （关于窗口会重新解码同一张 wu.png，新贴图恰好复用了那个失效的实例 ID）。
+        /// 因此这里做【重新赋值】而不是依赖实例 ID 的巧合。
+        /// </remarks>
+        private static void EnsureTitleIcon()
+        {
+            // Unity 的 == 对已销毁对象返回 true，因此被销毁的贴图也会走到这里重新加载
+            if (_titleIcon != null) return;
+
+            _titleIcon = VicToolsIconLoader.LoadPngIcon(TitleIconPath);
+            if (_titleIcon != null) _ownedDropdownIcons.Add(_titleIcon);
+        }
+
+        /// 应用窗口标题（文字 + 图标），确保图标引用始终有效
+        /// <remarks>
+        /// 调用时机：菜单打开、OnEnable（域重载/编辑器重启后窗口被恢复）、以及 OnGUI 中的引用自检。
+        /// </remarks>
+        private void ApplyTitleContent()
+        {
+            EnsureTitleIcon();
+            titleContent = new GUIContent($"VicTools(YD) {VicToolsConfig.Ver}", _titleIcon);
         }
 
         // 动态菜单项 - 使用MenuItem的validate函数来避免硬编码依赖
@@ -852,6 +880,12 @@ namespace VicTools
         private bool _isDragging;
         private readonly List<Rect> _itemRects = new();
         private Vector2 _scrollGui;
+
+        // ── 代码语言占比统计（Languages 比例条）──
+        // 统计 com.youdoo.victools 包内各语言的有效代码行数，在设置界面底部以比例条展示
+        private List<LanguageStat> _languageStats;
+        private bool _languageStatsDirty = true;
+        private static Texture2D _languageDotTexture;
         
         /// 显示设置界面
         private void ShowWindowOrderConfig()
@@ -976,7 +1010,303 @@ namespace VicTools
                 Debug.Log($"停靠式窗口设置已更新: {_disableDockedWindowAutoSize}");
             }
             EditorGUILayout.EndHorizontal();
+            
+            // 代码语言占比（Languages 比例条）
+            ShowCodeLanguageStats();
+            
             EditorGUILayout.EndScrollView();
+        }
+        
+        // ═══════════════════════════════════════════════════════════
+        //  代码语言占比统计（参考 GitHub Languages 比例条样式）
+        //  - 扫描 com.youdoo.victools 包内各语言文件，统计有效代码行数
+        //  - 以「比例条 + 色点图例」形式展示各语言占比
+        // ═══════════════════════════════════════════════════════════
+        
+        /// 单个语言（文件类型）的统计结果
+        private struct LanguageStat
+        {
+            /// 语言显示名，如 C# / ShaderLab / HLSL
+            public string Name;
+            /// 图例与比例条使用的配色
+            public Color Color;
+            /// 有效代码行数
+            public int Lines;
+            /// 文件数量
+            public int Files;
+        }
+        
+        /// 文件扩展名 → 语言名称与配色
+        private static readonly Dictionary<string, KeyValuePair<string, Color>> LanguageDefinitions =
+            new Dictionary<string, KeyValuePair<string, Color>>
+            {
+                { ".cs",          new KeyValuePair<string, Color>("C#",          new Color(0.45f, 0.36f, 0.85f)) },
+                { ".shader",      new KeyValuePair<string, Color>("ShaderLab",   new Color(0.85f, 0.70f, 0.26f)) },
+                { ".hlsl",        new KeyValuePair<string, Color>("HLSL",        new Color(0.46f, 0.83f, 0.45f)) },
+                { ".cginc",       new KeyValuePair<string, Color>("HLSL",        new Color(0.46f, 0.83f, 0.45f)) },
+                { ".compute",     new KeyValuePair<string, Color>("HLSL",        new Color(0.46f, 0.83f, 0.45f)) },
+                { ".glslinc",     new KeyValuePair<string, Color>("GLSL",        new Color(0.40f, 0.72f, 0.75f)) }
+                // 注：.json / .asmdef / .shadergraph 不计入统计
+                //     ShaderGraph 本质是序列化后的 JSON，单个文件可达数千行自动生成的数据，
+                //     计入后会让"手写代码占比"严重失真（与 .json 同属生成数据，故一并排除）
+            };
+        
+        /// 显示包内各语言代码占比（比例条 + 图例）
+        private void ShowCodeLanguageStats()
+        {
+            var style = EditorStyle.Get;
+            
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("代码量", style.subheading2);
+            
+            // 统计结果缓存：仅在首次进入或标记为脏时重新扫描，避免每帧遍历磁盘
+            if (_languageStatsDirty || _languageStats == null)
+            {
+                _languageStats = CollectLanguageStats();
+                _languageStatsDirty = false;
+            }
+            
+            var stats = _languageStats;
+            if (stats == null || stats.Count == 0)
+            {
+                EditorGUILayout.HelpBox("未在 com.youdoo.victools 包中找到可统计的代码文件。", MessageType.Warning);
+                return;
+            }
+            
+            int totalLines = 0;
+            int totalFiles = 0;
+            foreach (var s in stats)
+            {
+                totalLines += s.Lines;
+                totalFiles += s.Files;
+            }
+            
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField($"com.youdoo.victools · {totalFiles} · {totalLines}", style.normalfont_Hui, GUILayout.Width(260));
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(EditorGUIUtility.IconContent("Profiler.Memory").image, new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Height(20)))
+            {
+                _languageStats = CollectLanguageStats();
+                _languageStatsDirty = false;
+                Repaint();
+            }
+            EditorGUILayout.EndHorizontal();
+            
+            DrawLanguageRatioBar(stats, totalLines);
+            DrawLanguageLegend(stats, totalLines);
+        }
+        
+        /// 绘制语言比例条（各语言按有效代码行数占比着色）
+        /// <param name="stats">语言统计结果</param>
+        /// <param name="totalLines">有效代码总行数</param>
+        private void DrawLanguageRatioBar(List<LanguageStat> stats, int totalLines)
+        {
+            var barRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none, GUILayout.Height(12), GUILayout.ExpandWidth(true));
+            
+            // 轨道底色（未被语言占满时可见）
+            EditorGUI.DrawRect(barRect, new Color(0.22f, 0.22f, 0.24f));
+            if (totalLines <= 0) return;
+            
+            float x = barRect.x;
+            foreach (var s in stats)
+            {
+                float width = barRect.width * (s.Lines / (float)totalLines);
+                if (width <= 0f) continue;
+                EditorGUI.DrawRect(new Rect(x, barRect.y, width, barRect.height), s.Color);
+                x += width;
+            }
+        }
+        
+        /// 绘制语言图例（色点 + 名称 + 百分比，超出宽度自动换行）
+        /// <param name="stats">语言统计结果</param>
+        /// <param name="totalLines">有效代码总行数</param>
+        private void DrawLanguageLegend(List<LanguageStat> stats, int totalLines)
+        {
+            var labelStyle = new GUIStyle(EditorStyles.miniLabel != null ? EditorStyles.miniLabel : EditorStyles.label);
+            labelStyle.normal.textColor = EditorGUIUtility.isProSkin
+                ? new Color(0.78f, 0.78f, 0.80f)
+                : new Color(0.25f, 0.25f, 0.25f);
+            
+            const float dotSize = 8f;
+            const float lineHeight = 18f;
+            const float itemSpacing = 16f;
+            
+            // 计算每项的文本内容与宽度
+            var contents = new GUIContent[stats.Count];
+            var itemWidths = new float[stats.Count];
+            float totalWidth = 0f;
+            for (int i = 0; i < stats.Count; i++)
+            {
+                float percent = totalLines > 0 ? stats[i].Lines * 100f / totalLines : 0f;
+                contents[i] = new GUIContent($"{stats[i].Name} {percent:F1}%");
+                itemWidths[i] = dotSize + 5f + labelStyle.CalcSize(contents[i]).x + itemSpacing;
+                totalWidth += itemWidths[i];
+            }
+            
+            // 面板位于 ScrollView 内，可用宽度按窗口宽度估算
+            float availableWidth = Mathf.Max(140f, position.width - 46f);
+            int rowCount = Mathf.Max(1, Mathf.CeilToInt(totalWidth / availableWidth));
+            var areaRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none, GUILayout.Height(rowCount * lineHeight), GUILayout.ExpandWidth(true));
+            
+            float x = areaRect.x;
+            float y = areaRect.y;
+            for (int i = 0; i < stats.Count; i++)
+            {
+                // 超出右边界则换行
+                if (x > areaRect.x && x + itemWidths[i] > areaRect.xMax)
+                {
+                    x = areaRect.x;
+                    y += lineHeight;
+                }
+                
+                // 色点
+                var dotRect = new Rect(x, y + (lineHeight - dotSize) * 0.5f, dotSize, dotSize);
+                var prevColor = GUI.color;
+                GUI.color = stats[i].Color;
+                GUI.DrawTexture(dotRect, GetLanguageDotTexture());
+                GUI.color = prevColor;
+                
+                // 名称 + 百分比
+                var textRect = new Rect(x + dotSize + 5f, y, itemWidths[i], lineHeight);
+                GUI.Label(textRect, contents[i], labelStyle);
+                
+                x += itemWidths[i];
+            }
+        }
+        
+        /// 获取图例色点贴图（抗锯齿圆形，懒创建并缓存）
+        /// <returns>圆形色点贴图</returns>
+        private static Texture2D GetLanguageDotTexture()
+        {
+            if (_languageDotTexture != null) return _languageDotTexture;
+            
+            const int size = 32;
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            
+            var pixels = new Color32[size * size];
+            float radius = size * 0.5f - 1f;
+            float center = size * 0.5f;
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = x + 0.5f - center;
+                    float dy = y + 0.5f - center;
+                    float distance = Mathf.Sqrt(dx * dx + dy * dy);
+                    float alpha = Mathf.Clamp01(radius - distance + 0.5f);
+                    pixels[y * size + x] = new Color32(255, 255, 255, (byte)(alpha * 255f));
+                }
+            }
+            
+            texture.SetPixels32(pixels);
+            texture.Apply();
+            _languageDotTexture = texture;
+            return _languageDotTexture;
+        }
+        
+        /// 收集包内各语言的有效代码行数
+        /// <returns>按行数从多到少排序的语言统计结果</returns>
+        private static List<LanguageStat> CollectLanguageStats()
+        {
+            var result = new List<LanguageStat>();
+            var root = GetPackageRootPath();
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return result;
+            
+            // name → (颜色, 行数, 文件数)
+            var accumulator = new Dictionary<string, KeyValuePair<Color, Vector2Int>>();
+            string[] files;
+            try
+            {
+                files = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[VicTools] 读取包目录失败：{e.Message}");
+                return result;
+            }
+            
+            foreach (var file in files)
+            {
+                var ext = Path.GetExtension(file).ToLowerInvariant();
+                if (!LanguageDefinitions.TryGetValue(ext, out var definition)) continue;
+                
+                int lines = CountCodeLines(file);
+                if (lines <= 0) continue;
+                
+                if (accumulator.TryGetValue(definition.Key, out var current))
+                {
+                    accumulator[definition.Key] = new KeyValuePair<Color, Vector2Int>(current.Key,
+                        new Vector2Int(current.Value.x + lines, current.Value.y + 1));
+                }
+                else
+                {
+                    accumulator[definition.Key] = new KeyValuePair<Color, Vector2Int>(definition.Value, new Vector2Int(lines, 1));
+                }
+            }
+            
+            foreach (var kv in accumulator)
+            {
+                result.Add(new LanguageStat
+                {
+                    Name = kv.Key,
+                    Color = kv.Value.Key,
+                    Lines = kv.Value.Value.x,
+                    Files = kv.Value.Value.y
+                });
+            }
+            
+            // 按行数降序（占比高的排在前面，与比例条顺序一致）
+            return result.OrderByDescending(s => s.Lines).ToList();
+        }
+        
+        /// 获取当前包在磁盘上的根目录
+        /// <returns>包的绝对路径，获取失败返回 null</returns>
+        private static string GetPackageRootPath()
+        {
+            var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(VicToolsWindow).Assembly);
+            if (packageInfo == null) return null;
+            
+            var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
+            if (string.IsNullOrEmpty(projectRoot)) return null;
+            
+            try
+            {
+                return Path.GetFullPath(Path.Combine(projectRoot, packageInfo.assetPath));
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+        
+        /// 统计单文件的有效代码行数（忽略空行与整行注释）
+        /// <param name="filePath">文件绝对路径</param>
+        /// <returns>有效代码行数</returns>
+        private static int CountCodeLines(string filePath)
+        {
+            int count = 0;
+            try
+            {
+                foreach (var raw in File.ReadLines(filePath))
+                {
+                    var line = raw.Trim();
+                    if (line.Length == 0) continue;
+                    if (line.StartsWith("//", StringComparison.Ordinal) ||
+                        line.StartsWith("/*", StringComparison.Ordinal) ||
+                        line.StartsWith("*", StringComparison.Ordinal)) continue;
+                    count++;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[VicTools] 统计代码行数失败：{filePath}\n{e.Message}");
+            }
+            return count;
         }
         
         /// 处理拖拽逻辑 - 完全重写版本
@@ -1185,10 +1515,21 @@ namespace VicTools
             VicToolsIconLoader.ReleaseAll(_ownedDropdownIcons);
             _itemIconCache.Clear();
             _titleIcon = null;
+
+            // 释放语言占比图例使用的色点贴图
+            if (_languageDotTexture != null)
+            {
+                DestroyImmediate(_languageDotTexture);
+                _languageDotTexture = null;
+            }
         }
 
         private void OnEnable()
         {
+            // 重新应用标题栏图标：域重载 / 编辑器重启后，titleContent 里序列化的贴图引用已失效，
+            // 这里主动重贴一次，保证窗口被恢复时图标立即显示（无需再点菜单或开"关于"窗口）
+            ApplyTitleContent();
+
             // 注册选择变化事件 - 在主窗口中注册，确保在任何窗口状态下都能更新选中数量
             Selection.selectionChanged += OnSelectionChanged;
 
@@ -1418,6 +1759,15 @@ namespace VicTools
 
         void OnGUI()
         {
+            // 标题栏图标自检：图标是运行时解码的非持久化贴图，域重载/编辑器重启后引用会失效
+            // （或因实例 ID 被复用而指向别的贴图），这里做一次极廉价的引用比较，
+            // 一旦失效立即重新赋值，保证图标始终显示，不再依赖"打开关于窗口"这种巧合
+            EnsureTitleIcon();
+            if (_titleIcon != null && (titleContent == null || titleContent.image == null || titleContent.image != _titleIcon))
+            {
+                ApplyTitleContent();
+            }
+
             // 检查是否需要更新窗口尺寸 - 在第一次GUI绘制时强制执行窗口尺寸更新（仅在停靠式窗口设置关闭时）
             if (_needsWindowSizeUpdate && !_disableDockedWindowAutoSize)
             {
@@ -1492,7 +1842,7 @@ namespace VicTools
             GUIContent label = new GUIContent(EditorGUIUtility.IconContent("d_SocialNetworks.UDNOpen").image, "帮助文档");
             if (GUILayout.Button(label, new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(62), GUILayout.Height(20)))
             {
-                Application.OpenURL("https://nyq1lw99l7.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d?from=from_copylink");
+                Application.OpenURL("https://my.feishu.cn/wiki/TcWgwfvRviVsIRkTjT3coSpJnwh");
             }
             EditorGUILayout.Space(10);
             // 帮助按钮
@@ -1512,6 +1862,8 @@ namespace VicTools
                     GUILayout.Width(22), GUILayout.Height(20)))
             {
                 _showWindowOrderConfig = !_showWindowOrderConfig;
+                // 打开设置界面时重新统计包内代码占比，保证数据是最新的
+                if (_showWindowOrderConfig) _languageStatsDirty = true;
             }
 
             EditorGUILayout.EndHorizontal();

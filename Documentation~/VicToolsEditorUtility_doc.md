@@ -1,4 +1,4 @@
-# VicToolsEditorUtility 使用文档
+**VicToolsEditorUtility 使用文档**
 
 > 包：`com.youdoo.victools`
 > 源文件：`Editor/VicTools/VicToolsEditorUtility.cs`
@@ -27,11 +27,13 @@
    - 4.2 [API 总览](#42-api-总览)
    - 4.3 [Show — 打开确认窗口](#43-show--打开确认窗口)
    - 4.4 [Item — 清单条目](#44-item--清单条目)
-   - 4.5 [窗口行为与生命周期](#45-窗口行为与生命周期)
-   - 4.6 [完整使用示例（资源箱批量添加项目场景）](#46-完整使用示例资源箱批量添加项目场景)
-   - 4.7 [其他复用范式](#47-其他复用范式)
-   - 4.8 [与 EditorUtility.DisplayDialog 的对比](#48-与-editorutilitydisplaydialog-的对比)
-   - 4.9 [常见问题 / FAQ](#49-常见问题--faq)
+   - 4.5 [单项添加 —【添加】按钮](#45-单项添加--添加按钮)
+   - 4.5.1 [数量递减 — 动态状态（v1.3）](#451-数量递减--动态状态v13)
+   - 4.6 [窗口行为与生命周期](#46-窗口行为与生命周期)
+   - 4.7 [完整使用示例（资源箱批量添加项目场景）](#47-完整使用示例资源箱批量添加项目场景)
+   - 4.8 [其他复用范式](#48-其他复用范式)
+   - 4.9 [与 EditorUtility.DisplayDialog 的对比](#49-与-editorutilitydisplaydialog-的对比)
+   - 4.10 [常见问题 / FAQ](#410-常见问题--faq)
 5. [扩展规范](#5-扩展规范)（新增功能迭代用）
 6. [变更日志](#6-变更日志)
 
@@ -65,7 +67,7 @@
 | 类名 | 类型 | 职责 | 公开 API | 文档章节 |
 |---|---|---|---|---|
 | `VicToolsIconLoader` | 静态类 | PNG 图标加载 + 释放 | `LoadPngIcon` / `Release` / `ReleaseAll` | [§3](#3-victoolsiconloader--png-图标加载助手) |
-| `VicToolsListConfirmWindow` | EditorWindow | 通用【处理列表确认窗口】（非模态，确认后才执行） | `Show` / `Item` | [§4](#4-victoolslistconfirmwindow--通用处理列表确认窗口) |
+| `VicToolsListConfirmWindow` | EditorWindow | 通用【处理列表确认窗口】（非模态，确认后才执行） | `Show` / `Item` / `DynamicState` | [§4](#4-victoolslistconfirmwindow--通用处理列表确认窗口) |
 
 ---
 
@@ -371,8 +373,9 @@ Editor 里凡是"**先扫描 / 生成处理清单 → 让用户确认 → 再真
 | 类型 / 方法 | 签名 | 用途 |
 |---|---|---|
 | `VicToolsListConfirmWindow` | `public class ... : EditorWindow` | 通用处理列表确认窗口（非模态） |
-| `Show` | `static VicToolsListConfirmWindow Show(string title, string summary, IReadOnlyList<Item> items, Action onConfirm, string confirmButtonText = "确定", Action onCancel = null)` | 打开窗口并注册确认/取消回调 |
+| `Show` | `static VicToolsListConfirmWindow Show(string title, string summary, IReadOnlyList<Item> items, Action onConfirm, string confirmButtonText = "确定", Action onCancel = null, Func<Object, bool> onAddSingle = null, Func<DynamicState> dynamicStateProvider = null)` | 打开窗口并注册确认 / 取消 / 单项添加回调 |
 | `Item` | `public class Item { string Text; Object Target; }` | 清单条目：显示文本 + 可选定位目标 |
+| `DynamicState` | `public struct DynamicState { string Summary; string ConfirmButtonText; bool ConfirmDisabled; }` | **动态状态快照**（v1.3 新增）：由 `dynamicStateProvider` 每次绘制时求值，用于让概要与【确定】按钮上的数量随单项添加实时递减 |
 
 ### 4.3 Show — 打开确认窗口
 
@@ -385,7 +388,9 @@ public static VicToolsListConfirmWindow Show(
     IReadOnlyList<Item> items,
     Action onConfirm,
     string confirmButtonText = "确定",
-    Action onCancel = null)
+    Action onCancel = null,
+    Func<Object, bool> onAddSingle = null,
+    Func<DynamicState> dynamicStateProvider = null)
 ```
 
 #### 参数
@@ -398,6 +403,8 @@ public static VicToolsListConfirmWindow Show(
 | `onConfirm` | `Action` | 点击【确定】按钮时执行。**传 null 则相当于"只看不改"**（窗口仍可打开） |
 | `confirmButtonText` | `string` | 确认按钮文字，默认 `"确定"`；为 null/空时回退为 `"确定"` |
 | `onCancel` | `Action` | 点击【取消】/直接关窗时执行（可选） |
+| `onAddSingle` | `Func<Object, bool>` | **单项添加回调**（可选，v1.2 新增）。传入后清单每行在【定位】右侧多出【添加】按钮，点击即把该行 `Item.Target` 单独加入目标集合。返回 `true` = 成功（该行按钮置灰）。传 `null`（默认）= 不显示【添加】按钮。详见 [§4.5](#45-单项添加--添加按钮) |
+| `dynamicStateProvider` | `Func<DynamicState>` | **动态状态提供者**（可选，v1.3 新增）。窗口**每次绘制**都会重新调用它，用返回值刷新【概要文字】与【确定按钮文字】，从而让"确定添加（N）"这类数量在单项添加后实时递减。传 `null`（默认）= 使用上面传入的静态 `summary` / `confirmButtonText`。详见 [§4.5.1](#451-数量递减--动态状态v13) |
 
 #### 返回值
 
@@ -410,6 +417,8 @@ public static VicToolsListConfirmWindow Show(
 3. **最小尺寸**：`minSize = (560, 360)`
 4. **清单完整**：可滚动，**不限制条数**（与旧版弹窗"最多显示 20 条"不同）
 5. **定位按钮**：仅当 `Item.Target != null` 时显示，点击执行 `EditorGUIUtility.PingObject(Target)`
+6. **添加按钮**（v1.2）：仅当 `onAddSingle != null` 且 `Item.Target != null` 时显示，点击执行 `onAddSingle(Target)`（详见 [§4.5](#45-单项添加--添加按钮)）
+7. **动态状态**（v1.3）：`dynamicStateProvider != null` 时，概要与【确定】按钮文字改为每次绘制重新求值；`DynamicState.ConfirmDisabled = true` 时【确定】按钮置灰（详见 [§4.5.1](#451-数量递减--动态状态v13)）
 
 ### 4.4 Item — 清单条目
 
@@ -429,7 +438,207 @@ public class Item
 
 > `Text` 为 null 时会自动回退为空字符串，不会抛异常。
 
-### 4.5 窗口行为与生命周期
+### 4.5 单项添加 —【添加】按钮
+
+> 参考实现：`Editor/VicTools/VicToolsEditorUtility.cs`（按钮绘制）；`Editor/VicTools/ScenesTools.cs`（`AddObjectToResourceBox()` / `AddSingleObjectToResourceBox()`）
+
+#### 能力
+
+`Show()` 传入 `onAddSingle` 回调后，清单每一行在【定位】按钮**右侧**多出一个【添加】按钮：
+
+```text
+1. Assets/Scenes/Main.unity        [定位] [添加]
+2. Assets/Scenes/UI.unity          [定位] [添加]
+```
+
+点击【添加】→ **立即**把该行的 `Item.Target` 单独加入目标集合（资源箱），**不等**批量【确定添加】。
+
+#### 参数
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `onAddSingle` | `Func<Object, bool>` | 单项添加回调（可选）<br>• **入参**：被点击那一行的 `Item.Target`<br>• **返回值**：`true` = 添加成功（该行按钮置灰）；`false` = 失败（如已在集合中）<br>• 传 `null`（默认）= **不显示**【添加】按钮，完全保持 v1.1 行为 |
+
+#### 关键行为
+
+1. **显示条件**：`_onAddSingle != null` **且** `Item.Target != null` —— 与【定位】按钮条件一致；纯文本条目（`new Item("说明文字")`）不会出现【添加】按钮
+2. **成功后置灰**：窗口内部用 `HashSet<int>`（`VicToolsUnityCompat.GetStableId()`）记录已添加对象，用 `EditorGUI.DisabledScope` 禁用该行按钮，避免重复点击（走兼容层取 ID，兼容 Unity 6000.4+ 下 `GetInstanceID` 被废弃的问题）
+3. **即时反馈**：点击后 `ShowNotification` 弹出结果气泡（`已添加: XXX` / `添加失败(可能已在资源箱中)`）
+4. **不触发批量回调**：点【添加】**不会**执行 `onConfirm`（批量写入），两个通道完全独立
+5. **关窗即失效**：`OnDestroy` 清空 `_onAddSingle` 与 `_addedTargetIds`
+
+#### 调用侧：资源箱的公开 API
+
+窗口本身**不认识**"资源箱"，只认识 `Func<Object, bool>`。业务侧（`ScenesTools`）负责提供实现：
+
+```csharp
+/// 把单个对象添加到资源箱（公开 API，供确认窗口【添加】按钮等外部工具调用）
+public bool AddObjectToResourceBox(Object obj)
+{
+    if (!obj) return false;                       // null / 已被销毁
+    if (_resourceBox.Contains(obj)) return false; // 去重：同一实例只保留一份
+
+    // 场景对象默认带 DontSaveInEditor，不清掉会存不进存档
+    if (((int)obj.hideFlags & (int)HideFlags.DontSaveInEditor) != 0)
+    {
+        obj.hideFlags &= ~HideFlags.DontSaveInEditor;
+    }
+
+    InsertToResourceBoxByType(obj);           // 按类型插入 + 生成 displayName
+    RebuildIndexMappings();                   // 重建 InstanceID→索引 映射
+    UpdateSelectedObjectsInResourceBox();      // 刷新列表项上的选中态图标
+    if (Parent) Parent.Repaint();             // 重绘场景工具界面
+    SaveResourceBox(false);                   // 立即落盘（不弹确认框）
+    return true;
+}
+
+/// 单项添加回调：把确认窗口里某一行【添加】按钮对应的对象单独加入资源箱
+private bool AddSingleObjectToResourceBox(Object obj)
+{
+    if (!obj) return false;
+
+    bool ok = AddObjectToResourceBox(obj);
+    if (ok)
+    {
+        Debug.Log($"[ResourceBox] 已添加 {obj.name}");
+        if (Parent) Parent.ShowNotification(new GUIContent($"已添加: {obj.name}"));
+    }
+    else
+    {
+        Debug.Log($"[ResourceBox] {obj.name} 已在资源箱中，跳过");
+        if (Parent) Parent.ShowNotification(new GUIContent($"{obj.name} 已在资源箱中"));
+    }
+    return ok;
+}
+```
+
+#### 接入示例
+
+```csharp
+VicToolsListConfirmWindow.Show(
+    "添加项目场景",
+    summary,
+    confirmItems,
+    () => AddScenesToResourceBox(newScenes, capturedSkipped, capturedFailed),  // 批量通道
+    $"确定添加（{newScenes.Count}）",
+    () => Debug.Log("[ResourceBox] 已取消添加项目场景"),
+    obj => AddSingleAndRemove(obj, newScenes),                                // 单项通道（成功后从待添加列表移除）
+    () => new VicToolsListConfirmWindow.DynamicState                           // 动态状态：数量实时递减
+    {
+        Summary = BuildScenesSummary(newScenes.Count, skippedCount, failedCount),
+        ConfirmButtonText = $"确定添加（{newScenes.Count}）",
+        ConfirmDisabled = newScenes.Count <= 0,
+    });
+```
+
+> `AddSingleAndRemove` 与 `DynamicState` 的说明见 [§4.5.1 数量递减 — 动态状态](#451-数量递减--动态状态v13)。
+
+#### 已在使用的调用点
+
+| 调用点 | 窗口标题 | 单项添加对象 | 待添加列表（数量递减来源） |
+|---|---|---|---|
+| `AddAllProjectScenesToResourceBox()` | 添加项目场景 | `SceneAsset` | `newScenes`（`List<SceneAsset>`） |
+| `AddCurrentSceneMainLightToResourceBox()` | 添加当前场景主光 | 主光 `GameObject` | `pendingLights`（`List<GameObject>`） |
+| `AddCurrentSceneCamerasToResourceBox()` | 添加当前场景摄像机 | 摄像机 `GameObject` | `pendingCameras`（`List<GameObject>`） |
+| `AddRenderPipelineConfigsToResourceBox()` | 添加渲染管线配置 | `RenderPipelineAsset` / `RendererData` | `pendingAssets`（`List<Object>`） |
+
+### 4.5.1 数量递减 — 动态状态（v1.3）
+
+> 需求背景：单项添加把某个对象单独加入资源箱后，【确定添加（N）】上的数量若仍停留在打开窗口那一刻的快照（如 10），会误导用户以为还有 10 个待添加。
+
+#### 问题根因
+
+`summary` 与 `confirmButtonText` 都是 `Show()` 调用时**一次性构造好的字符串**，窗口内部只负责把它们显示出来。单项添加并不会回头修改这两个字符串，因此数量不会自动递减。
+
+#### 解决方案：动态状态提供者
+
+`Show()` 增加末位可选参数 `Func<DynamicState> dynamicStateProvider`，窗口在 `OnGUI` 里**每次绘制都重新求值一次**：
+
+```csharp
+/// 动态状态快照：由 Show() 的 dynamicStateProvider 提供
+public struct DynamicState
+{
+    /// 概要文字（可多行）；为空时沿用 Show 传入的静态 summary
+    public string Summary;
+
+    /// 确定按钮文字（如"确定添加（3）"）；为空时沿用 Show 传入的静态 confirmButtonText
+    public string ConfirmButtonText;
+
+    /// 是否禁用确定按钮。默认 false = 启用；用于"待添加数量已归零"时阻止无效的批量提交
+    public bool ConfirmDisabled;
+}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `Summary` | `string` | 顶部概要文字。为 null/空时沿用 `Show()` 传入的静态 `summary` |
+| `ConfirmButtonText` | `string` | 【确定】按钮文字。为 null/空时沿用 `Show()` 传入的静态 `confirmButtonText` |
+| `ConfirmDisabled` | `bool` | 是否禁用【确定】按钮。默认 `false` = 启用；数量归零时置 `true` 可避免空提交 |
+
+#### 关键行为
+
+1. **每次绘制求值**：`OnGUI` 开头调用一次 `dynamicStateProvider()`，据此决定概要文字、按钮文字与按钮可用状态
+2. **空值回退**：任一字段为空时回退到 `Show()` 传入的静态值 —— 两者可混合使用，不必二选一
+3. **即时刷新**：单项添加成功后窗口主动 `Repaint()`，数量立刻递减（无需手动刷新）
+4. **数量递减的实现前提**：**调用侧**必须把"已单独添加"的对象从"待添加列表"中移除（见下方 `AddSingleAndRemove`），否则列表 `Count` 不变，动态状态取到的数字自然也不变
+5. **关窗即失效**：`OnDestroy` 清空 `_dynamicStateProvider`
+
+#### 调用侧：待添加列表 + 移除
+
+业务侧（`ScenesTools`）维护一个"待添加列表"（只含**尚未入箱、批量操作会写入**的对象），单项添加成功后从中移除：
+
+```csharp
+/// 通用单项添加回调:添加成功后再把该对象从"待添加列表"移除,使全局待添加数量递减
+/// <typeparam name="T">待添加列表的元素类型(须为 UnityEngine.Object 派生类)。</typeparam>
+private bool AddSingleAndRemove<T>(Object obj, List<T> pendingList) where T : Object
+{
+    bool ok = AddSingleObjectToResourceBox(obj);
+    // 从待添加列表移除 → 待添加数量递减
+    // （UnityEngine.Object 的 Equals 按 InstanceID 比较，Remove 可正确命中）
+    if (ok && obj is T typed && pendingList != null) pendingList.Remove(typed);
+    return ok;
+}
+```
+
+#### 接入示例（项目场景）
+
+```csharp
+var summary = BuildScenesSummary(newScenes.Count, skippedCount, failedCount);
+
+VicToolsListConfirmWindow.Show(
+    "添加项目场景",
+    summary,
+    confirmItems,
+    () => AddScenesToResourceBox(newScenes, capturedSkipped, capturedFailed),  // 批量通道
+    $"确定添加（{newScenes.Count}）",
+    () => Debug.Log("[ResourceBox] 已取消添加项目场景"),
+    // 单项通道：添加成功后从 newScenes 移除 → newScenes.Count 递减
+    obj => AddSingleAndRemove(obj, newScenes),
+    // 动态状态：每次绘制重新求值 → 概要与【确定添加（N）】实时递减
+    () => new VicToolsListConfirmWindow.DynamicState
+    {
+        Summary = BuildScenesSummary(newScenes.Count, skippedCount, failedCount),
+        ConfirmButtonText = $"确定添加（{newScenes.Count}）",
+        ConfirmDisabled = newScenes.Count <= 0,
+    });
+```
+
+效果：
+
+```text
+打开窗口：  待添加场景：10 个        [确定添加（10）]
+单点 3 个【添加】后：
+            待添加场景：7 个         [确定添加（7）]
+全部单独添加完：待添加场景：0 个    [确定添加（0）]（按钮置灰）
+```
+
+#### 批量通道与单项通道的关系
+
+- 单项添加**不会**触发 `onConfirm`（批量写入），两个通道依旧完全独立
+- 批量写入时业务侧仍有**二次去重**（`_resourceBox.Contains(...)`），因此已单独添加的对象不会被重复入箱
+- 主光窗口的【确定】按钮**始终可用**（`ConfirmDisabled = false`）：主光已在资源箱时点击仍会定位并选中它
+
+### 4.6 窗口行为与生命周期
 
 ```
 用户点击功能按钮
@@ -446,14 +655,15 @@ Show(...)  ──► 关闭旧窗口 → 创建新窗口 → ShowUtility()（非
 
 | 事件 | 行为 |
 |---|---|
-| 确认按钮 | 先把 `onConfirm` 存入局部变量 → `Close()` → 再执行回调（**顺序很重要**：`Close()` 会触发 `OnDestroy` 清空字段） |
+| 确认按钮 | 先把 `onConfirm` 存入局部变量 → `Close()` → 再执行回调（**顺序很重要**：`Close()` 会触发 `OnDestroy` 清空字段）；`DynamicState.ConfirmDisabled = true` 时按钮置灰、不可点击 |
 | 取消按钮 / 关窗 | 同上，执行 `onCancel`（可为 null） |
-| `OnDestroy` | 清空 `_onConfirm` / `_onCancel`，重置 `_items`；**不做任何业务处理** |
+| 单项添加 | 执行 `onAddSingle(Target)` → 成功则记录到 `_addedTargetIds` 置灰该行 → `ShowNotification` 提示 → `Repaint()` 让动态数量立即刷新（**不触发** `onConfirm`） |
+| `OnDestroy` | 清空 `_onConfirm` / `_onCancel` / `_onAddSingle` / `_dynamicStateProvider`，重置 `_items`；**不做任何业务处理** |
 | 重复调用 `Show` | 旧窗口的 `onCancel` 会被触发（因为旧窗口被 `Close()`），新窗口接管 |
 
 > ⚠️ 注意：重复点击功能按钮时，上一次的窗口会被关闭并触发其 `onCancel` 回调。若 `onCancel` 里有"用户已取消"之类的日志，注意区分场景。
 
-### 4.6 完整使用示例（资源箱批量添加项目场景）
+### 4.7 完整使用示例（资源箱批量添加项目场景）
 
 > 参考实现：`Editor/VicTools/ScenesTools.cs` → `AddAllProjectScenesToResourceBox()` / `AddScenesToResourceBox()`
 > 功能：扫描项目 `Assets` 下所有场景，列出清单让用户确认后再放进资源箱。
@@ -543,18 +753,25 @@ private void AddAllProjectScenesToResourceBox()
     }
 
     // 概要文字：多行会逐行显示
-    var summary = $"待添加场景：{newScenes.Count} 个";
-    if (skippedCount > 0) summary += $"\n已在资源箱（跳过）：{skippedCount} 个";
-    if (failedCount > 0) summary += $"\n加载失败：{failedCount} 个";
+    var summary = BuildScenesSummary(newScenes.Count, skippedCount, failedCount);
 
     // 公共窗口（Vic.Editor.VicToolsListConfirmWindow）：非模态，用户确认后才执行添加
     VicToolsListConfirmWindow.Show(
         "添加项目场景",                                     // 窗口标题
         summary,                                           // 顶部概要
         confirmItems,                                      // 完整清单（带【定位】）
-        () => AddScenesToResourceBox(newScenes, capturedSkipped, capturedFailed), // 确认回调
-        $"确定添加（{newScenes.Count}）",                    // 确认按钮文字
-        () => Debug.Log("[ResourceBox] 已取消添加项目场景"));   // 取消回调
+        () => AddScenesToResourceBox(newScenes, capturedSkipped, capturedFailed), // 批量通道
+        $"确定添加（{newScenes.Count}）",                    // 确认按钮文字（静态）
+        () => Debug.Log("[ResourceBox] 已取消添加项目场景"),   // 取消回调
+        // 单项通道：每行【添加】按钮，成功后从 newScenes 移除 → newScenes.Count 递减
+        obj => AddSingleAndRemove(obj, newScenes),
+        // 动态状态：每次绘制重新求值 → 概要与【确定添加（N）】随单项添加实时递减
+        () => new VicToolsListConfirmWindow.DynamicState
+        {
+            Summary = BuildScenesSummary(newScenes.Count, skippedCount, failedCount),
+            ConfirmButtonText = $"确定添加（{newScenes.Count}）",
+            ConfirmDisabled = newScenes.Count <= 0,
+        });
     // 实际写入由预览窗口的【确定添加】按钮触发；此处直接返回
 }
 ```
@@ -607,7 +824,7 @@ private void AddScenesToResourceBox(List<SceneAsset> scenes, int skippedCount, i
 | 完成提示不模态 | 用 `Parent.ShowNotification(...)` 气泡 + `Debug.Log`，避免"添加完成"弹窗再次卡住编辑器 |
 | 可定位清单 | `Item` 的 `Target` 传 `SceneAsset`，用户在窗口里点【定位】即可跳到 Project 窗口核对 |
 
-### 4.7 其他复用范式
+### 4.8 其他复用范式
 
 #### 范式 A：纯文本清单（无资源定位）
 
@@ -649,7 +866,7 @@ VicToolsListConfirmWindow.Show(
     onConfirm: null);
 ```
 
-### 4.8 与 EditorUtility.DisplayDialog 的对比
+### 4.9 与 EditorUtility.DisplayDialog 的对比
 
 | 维度 | `EditorUtility.DisplayDialog` | `VicToolsListConfirmWindow` |
 |---|---|---|
@@ -663,13 +880,13 @@ VicToolsListConfirmWindow.Show(
 
 > 简单的"确定/取消"仍可直接用 `DisplayDialog`；**只要涉及"让用户核对一份清单"**，统一用本窗口。
 
-### 4.9 常见问题 / FAQ
+### 4.10 常见问题 / FAQ
 
 #### Q1：为什么用 `ShowUtility()` 而不是 `Show()`？
 **A**：`Show()` 会把窗口作为独立主窗口（带完整标题栏、可分离标签页），在 Unity 里通常用于"长期打开的工具窗口"；`ShowUtility()` 是浮动工具窗口，更适合"一次性的确认/预览"，且用户更容易一眼看出它可以随时关掉。
 
 #### Q2：窗口打开期间数据被外部改动了怎么办？
-**A**：本窗口只负责"展示 + 收集确认"，**不保证数据一致性**。因此约定：**扫描与写入分离**，并在写入回调里做二次校验（参见 [§4.6](#46-完整使用示例资源箱批量添加项目场景) 的"二次校验"）。
+**A**：本窗口只负责"展示 + 收集确认"，**不保证数据一致性**。因此约定：**扫描与写入分离**，并在写入回调里做二次校验（参见 [§4.7](#47-完整使用示例资源箱批量添加项目场景) 的"二次校验"）。
 
 #### Q3：`onConfirm` 里可以再弹窗 / 再开窗口吗？
 **A**：可以。`onConfirm` 是在 `Close()` 之后执行的，此时窗口已销毁，弹窗或再开窗口不会被自身遮挡。
@@ -729,6 +946,8 @@ VicToolsListConfirmWindow.Show(
 
 | 日期 | 版本 | 变更 | 作者 |
 |---|---|---|---|
+| 2026-10-29 | 1.3 | `VicToolsListConfirmWindow` 新增**动态状态**能力：`Show()` 增加 `dynamicStateProvider`（`Func<DynamicState>`）参数与嵌套结构 `DynamicState`（`Summary` / `ConfirmButtonText` / `ConfirmDisabled`），窗口每次绘制重新求值，**单项添加后【确定添加（N）】与概要中的数量实时递减**、数量归零时【确定】按钮置灰；新增 [§4.5.1 数量递减 — 动态状态](#451-数量递减--动态状态v13)；`ScenesTools` 四个确认窗口（项目场景 / 主光 / 摄像机 / 渲染管线配置）接入，新增 `AddSingleAndRemove<T>()` 与 `Build*Summary()` | — |
+| 2026-10-29 | 1.2 | `VicToolsListConfirmWindow` 新增**单项添加**能力：`Show()` 增加 `onAddSingle`（`Func<Object, bool>`）参数，传入后清单每行【定位】右侧显示【添加】按钮，可不等批量【确定】就把单个对象单独加入资源箱；新增 [§4.5 单项添加](#45-单项添加--添加按钮)；`ScenesTools` 配套新增公开 API `AddObjectToResourceBox()` | — |
 | 2026-10-26 | 1.1 | 新增成员：`VicToolsListConfirmWindow`（通用处理列表确认窗口，非模态；`Show` / `Item`）；补充 [§4](#4-victoolslistconfirmwindow--通用处理列表确认窗口) 使用说明与资源箱批量添加场景的完整示例 | — |
 | 2026-10-12 | 1.0 | 初始文档；当前成员：`VicToolsIconLoader`（`LoadPngIcon` / `Release` / `ReleaseAll`） | — |
 

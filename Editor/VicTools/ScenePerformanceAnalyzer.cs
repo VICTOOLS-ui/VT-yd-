@@ -2,6 +2,7 @@
 //【性能分析1.6】- 优化未使用资源扫描和删除逻辑，修复 Prefab 嵌套依赖检测问题
 //【性能分析1.7】 对象统计模块添加静态对象统计快速选择
 //【性能分析1.8】 重构：版本号移至本类，与 ScenesTools/ProjectTools 等脚本保持一致
+//【性能分析1.9】 优化信息交互界面。
 
 using UnityEngine;
 using UnityEditor;
@@ -16,7 +17,7 @@ namespace VicTools
     public class ScenePerformanceAnalyzer : SubWindow
     {
         /// 性能分析器窗口标签名（包含版本号），与 ScenesTools / ProjectTools 等脚本一致，由本类自行管理
-        public const string WindowName = "[性能分析 v1.8]";
+        public const string WindowName = "[性能分析 v1.9]";
 
         // 性能数据
         private PerformanceData _performanceData;
@@ -73,7 +74,7 @@ namespace VicTools
         // 用户可配置的排除列表
         private readonly List<string> _excludedPaths = new(); // 排除的路径列表
         private readonly List<string> _excludedPatterns = new(); // 排除的模式（通配符）
-        private bool _showExclusionSettings = false; // 是否显示排除设置
+        private bool _showExclusionSettings = true; // 是否显示排除设置
         private Vector2 _exclusionScrollPosition;
         private string _newExclusionPath = ""; // 新排除路径输入
         private string _newExclusionPattern = ""; // 新排除模式输入
@@ -93,6 +94,15 @@ namespace VicTools
         private bool _showPerformanceWarnings = true;
         private bool _showDetailedStatisticsSection = true;
         private bool _showResourceUtilization = true;
+
+        private bool _duo1 = true;
+        private bool _duo2 = false;
+        private bool _duo3 = false;
+        private bool _duo4 = false;
+        private bool _duo5 = false;
+        private bool _duo6 = false;
+        private bool _duo7 = false;
+        private bool _duo8 = true;
 
         public ScenePerformanceAnalyzer(string name, EditorWindow parent) : base(WindowName, parent)
         {
@@ -189,41 +199,53 @@ namespace VicTools
             // EditorGUILayout.BeginVertical();
             // 选中对象三角面数信息
             if (_showSelectedObjectInfo)
+            {GUI.contentColor = Color.cyan;
+            if (EditorStyle.DrawSubheadingFoldout(ref _duo1, "选中对象信息", style.subheading))
+            {
                 DrawSelectedObjectTriangleInfo(style.area, style.subheading, style.normalfont, contentWidth);
-
+            }
+            GUI.contentColor = Color.white;}
+            // 性能警告
+            if (_showPerformanceWarnings){
+                GUI.contentColor = Color.red;
+                DrawPerformanceWarningsSection(style.area, style.subheading, style.normalfont, contentWidth);
+                GUI.contentColor = Color.white;
+            }
             // 场景基本信息
-            if (_showSceneInfo)
+            if (_showSceneInfo){
+                if (EditorStyle.DrawSubheadingFoldout(ref _duo2, "场景基本信息", style.subheading))
                 DrawSceneInfoSection(style.area, style.subheading, style.normalfont, contentWidth);
-            
+            }
             // 渲染管线信息
             // DrawRenderPipelineSection(style.area, style.subheading, style.normalfont, contentWidth);
             
             // 内存使用情况
-            if (_showMemoryUsage)
-                DrawMemoryUsageSection(style.area, style.subheading, style.normalfont, contentWidth);
-            
+            if (_showMemoryUsage){
+                if (EditorStyle.DrawSubheadingFoldout(ref _duo3, "内存使用情况", style.subheading))
+                DrawMemoryUsageSection(EditorStyles.textField, style.subheading, style.normalfont, contentWidth);
+            }
             // 对象统计
-            if (_showObjectStatistics)
+            if (_showObjectStatistics){
+                if (EditorStyle.DrawSubheadingFoldout(ref _duo4, "对象统计", style.subheading))
                 DrawObjectStatisticsSection(style.area, style.subheading, style.normalfont, contentWidth);
-            
+            }
             // 全局光照检查
-            if (_showGlobalIllumination)
+            if (_showGlobalIllumination){
+                if (EditorStyle.DrawSubheadingFoldout(ref _duo5, "全局光照检查", style.subheading))
                 DrawGlobalIlluminationSection(style.area, style.subheading, style.normalfont, contentWidth);
-
-            // 性能警告
-            if (_showPerformanceWarnings)
-                DrawPerformanceWarningsSection(style.area, style.subheading, style.normalfont, contentWidth);
-            
+            }
             // 资源利用率检查
-            if (_showResourceUtilization)
+            if (_showResourceUtilization){
+                if (EditorStyle.DrawSubheadingFoldout(ref _duo8, "资源利用率检查", style.subheading))
                 DrawResourceUtilizationSection(style.area, style.subheading, style.normalfont, contentWidth);
-            
+            }
             // 详细统计和三角面数信息 - 水平布局
             // EditorGUILayout.BeginHorizontal(GUILayout.Width(400));
             // 详细统计
-            if (_showDetailedStatisticsSection)
+            if (_showDetailedStatisticsSection){
+                if (EditorStyle.DrawSubheadingFoldout(ref _duo7, "详细统计", style.subheading))
                 DrawDetailedStatisticsSection(style.area, style.subheading, style.normalfont, contentWidth);
-            
+            }
             // EditorGUILayout.EndHorizontal();
             EditorGUILayout.EndScrollView();
             // EditorGUILayout.EndVertical();
@@ -272,7 +294,24 @@ namespace VicTools
             // 第三行开关 - 资源利用率检查
             bool newShowResourceUtilization = CreateToggleWithStyle("资源利用检查", _showResourceUtilization,
                 null, null, null, null, 90, 20);
-            
+
+            // 展开 / 折叠按钮 - 批量控制各分节（_duo1 ~ _duo7）的折叠状态
+            // 勾选"资源利用检查"时会独占显示（其余分节全部关闭），此时隐藏这两个按钮
+            if (!_showResourceUtilization)
+            {
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(new GUIContent("▼ 展开", "展开全部分节内容"), style.normalButton,
+                        GUILayout.Width(60), GUILayout.Height(20)))
+                {
+                    SetDuoFoldoutState(true);
+                }
+                if (GUILayout.Button(new GUIContent("▶ 折叠", "折叠全部分节内容"), style.normalButton,
+                        GUILayout.Width(60), GUILayout.Height(20)))
+                {
+                    SetDuoFoldoutState(false);
+                }
+            }
+
             // 检测状态变化
             if (newShowResourceUtilization != _showResourceUtilization)
             {
@@ -317,6 +356,24 @@ namespace VicTools
 
             EditorGUILayout.EndVertical();
         }
+
+        /// 批量设置各分节的折叠状态（_duo1 ~ _duo7）
+        /// </summary>
+        /// <param name="expanded">true = 全部展开，false = 全部收起</param>
+        private void SetDuoFoldoutState(bool expanded)
+        {
+            _duo1 = expanded;
+            _duo2 = expanded;
+            _duo3 = expanded;
+            _duo4 = expanded;
+            _duo5 = expanded;
+            _duo6 = expanded;
+            _duo7 = expanded;
+
+            // 立即刷新主窗口，让折叠状态马上生效
+            Parent?.Repaint();
+        }
+
         /// 刷新性能数据
         private void RefreshPerformanceData()
         {
@@ -803,7 +860,7 @@ namespace VicTools
         private void DrawSceneInfoSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             EditorGUILayout.BeginVertical(areaStyle);
-            EditorGUILayout.LabelField("场景基本信息", subheadingStyle);
+            // EditorGUILayout.LabelField("场景基本信息", subheadingStyle);
             
             EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
             EditorGUILayout.LabelField("场景名称:", normalStyle, GUILayout.Width(80));
@@ -896,7 +953,7 @@ namespace VicTools
         private void DrawObjectStatisticsSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             EditorGUILayout.BeginVertical(areaStyle);
-            EditorGUILayout.LabelField("对象统计 (点击数字选择对象)（点击右上角'刷新数据'）", subheadingStyle);
+            EditorGUILayout.LabelField("(点击数字选择对象)（点击右上角'刷新数据'）", normalStyle);
             
             EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
             EditorGUILayout.LabelField("网格:", normalStyle, GUILayout.Width(50));
@@ -996,7 +1053,7 @@ namespace VicTools
         private void DrawMemoryUsageSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             EditorGUILayout.BeginVertical(areaStyle);
-            EditorGUILayout.LabelField("内存使用情况", subheadingStyle);
+            // EditorGUILayout.LabelField("内存使用情况", subheadingStyle);
             
             EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
             EditorGUILayout.LabelField("三角形:", normalStyle, GUILayout.Width(80));
@@ -1030,7 +1087,7 @@ namespace VicTools
                 return;
 
             EditorGUILayout.BeginVertical(areaStyle);
-            GUI.contentColor = Color.red;
+            
             EditorGUILayout.LabelField("性能警告", subheadingStyle);
             GUI.contentColor = Color.white;
             foreach (var warning in _performanceWarnings)
@@ -1061,7 +1118,7 @@ namespace VicTools
             }
 
             EditorGUILayout.EndVertical();
-            EditorGUILayout.Space();
+            // EditorGUILayout.Space();
         }
 
         /// 根据性能警告选择相关对象
@@ -1869,11 +1926,11 @@ namespace VicTools
             EditorGUILayout.BeginVertical(areaStyle);
 
             // 标题行 - 包含"选择所有层级"按钮
-            EditorGUILayout.BeginHorizontal();
-            GUI.contentColor = Color.cyan;
-            EditorGUILayout.LabelField("选中对象详细信息", subheadingStyle);
+            // EditorGUILayout.BeginHorizontal();
+            // GUI.contentColor = Color.cyan;
+            // EditorGUILayout.LabelField("选中对象详细信息", subheadingStyle);
             GUI.contentColor = Color.white;
-            GUILayout.FlexibleSpace();
+            // GUILayout.FlexibleSpace();
             // 添加"选择所有层级"按钮
             var selectedObjects = Selection.gameObjects;
             bool hasSelection = selectedObjects.Length > 0;
@@ -1883,9 +1940,9 @@ namespace VicTools
             {
                 SceneTools.SelectAllHierarchy();
             }
-            GUILayout.Space(20);
+            // GUILayout.Space(20);
             GUI.enabled = true;
-            EditorGUILayout.EndHorizontal();
+            // EditorGUILayout.EndHorizontal();
             
             // 使用EditorStyles.textArea包裹内容
             EditorGUILayout.BeginVertical(EditorStyles.textArea);
@@ -2102,7 +2159,6 @@ namespace VicTools
             
             GUI.backgroundColor = Color.white;
             EditorGUILayout.EndVertical();
-            EditorGUILayout.Space();
         }
 
         // ReSharper disable Unity.PerformanceAnalysis
@@ -2110,7 +2166,7 @@ namespace VicTools
         private void DrawGlobalIlluminationSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             // EditorGUILayout.BeginVertical();
-            EditorGUILayout.LabelField("全局光照检查", subheadingStyle);
+            // EditorGUILayout.LabelField("全局光照检查", subheadingStyle);
             EditorGUILayout.BeginVertical(EditorStyles.textField);
             // 全局光照统计
             EditorGUILayout.BeginHorizontal();
