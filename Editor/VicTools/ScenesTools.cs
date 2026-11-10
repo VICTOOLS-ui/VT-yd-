@@ -1044,7 +1044,8 @@ public class ResourceBoxRecoveryItem
             {
                 AddCurrentSceneCamerasToResourceBox();
             }
-            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("Profiler.Rendering").image, "添加当前场景主光"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(20)))
+            //Profiler.Rendering
+            if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("d_PreMatLight0").image, "添加当前场景主光"),new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(20), GUILayout.Height(20)))
             {
                 AddCurrentSceneMainLightToResourceBox();
             }
@@ -1347,7 +1348,8 @@ public class ResourceBoxRecoveryItem
                     if (!isObjectNull && obj is Material material)
                     {
                         GUI.backgroundColor = Color.green;
-                        if (GUILayout.Button(new GUIContent(EditorGUIUtility.IconContent("tree_icon_leaf").image, "赋予材质"), new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(25), GUILayout.Height(20), GUILayout.ExpandWidth(false)))
+                        // 图标改用 Project 窗口中 Material 资源的图标（球形材质图标），与资源箱里显示的材质图标保持一致
+                        if (GUILayout.Button(new GUIContent(GetProjectMaterialIcon(material), "赋予材质"), new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Width(25), GUILayout.Height(20), GUILayout.ExpandWidth(false)))
                         {
                             SceneTools.AssignMaterialToSelectedModels(material);
                         }
@@ -6274,6 +6276,40 @@ public class ResourceBoxRecoveryItem
                 }
             }
             return null;
+        }
+
+        /// 获取 Project 窗口中 Material 资源使用的图标（球形材质图标）。
+        /// 优先用 EditorGUIUtility.ObjectContent 按对象实际资源取图标（与 Project 窗口显示一致），
+        /// 退化到 AssetDatabase.GetCachedIcon("Default-Material")（内置资源），
+        /// 最后才用内置 TreeEditor.Material 兜底。
+        internal static Texture GetProjectMaterialIcon(Material material)
+        {
+            Texture icon = null;
+            try
+            {
+                // ObjectContent 对已入库资源返回 Project 窗口同款材质图标
+                if (material)
+                {
+                    icon = EditorGUIUtility.ObjectContent(material, typeof(Material)).image;
+                }
+            }
+            catch { /* 少数情况下可能抛异常，吞掉走下面的兜底 */ }
+
+            if (icon == null)
+            {
+                try
+                {
+                    icon = AssetDatabase.GetCachedIcon("Default-Material");
+                }
+                catch { /* 取不到内置资源图标，继续兜底 */ }
+            }
+
+            if (icon == null)
+            {
+                icon = EditorGUIUtility.IconContent("TreeEditor.Material").image;
+            }
+
+            return icon;
         }
 
     }
