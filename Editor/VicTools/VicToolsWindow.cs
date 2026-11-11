@@ -1831,7 +1831,7 @@ namespace VicTools
                 ShowToolsDropdown(rect);
             }
             GUI.backgroundColor = Color.green;
-            if (GUILayout.Button(new GUIContent("Material:URP ▾", "创建\\更换 材质（+ Ctrl 点击更换材质）"), GUILayout.Width(94), GUILayout.Height(20)))
+            if (GUILayout.Button(new GUIContent("Shader:URP ▾", "创建\\更换 材质（+ Ctrl 点击更换材质）"), GUILayout.Width(94), GUILayout.Height(20)))
             {
                 var rect = GUILayoutUtility.GetLastRect();
                 ShowMaterialDropdown(rect);
