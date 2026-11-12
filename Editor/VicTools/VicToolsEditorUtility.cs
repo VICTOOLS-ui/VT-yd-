@@ -153,10 +153,18 @@ namespace Vic.Editor
             /// 可选的定位目标(资源资产等);为 null 时不显示【定位】按钮。
             public Object Target { get; }
 
-            public Item(string text, Object target = null)
+            /// 可选的文本颜色(如标记被当前场景引用的资源);为 null 时使用默认颜色。
+            public Color? TextColor { get; }
+
+            /// 是否为「被当前场景引用」的资源(用于清单内的引用对象批量操作)。
+            public bool IsReferenced { get; }
+
+            public Item(string text, Object target = null, Color? textColor = null, bool isReferenced = false)
             {
                 Text = text ?? string.Empty;
                 Target = target;
+                TextColor = textColor;
+                IsReferenced = isReferenced;
             }
         }
 
@@ -190,6 +198,19 @@ namespace Vic.Editor
         // 动态状态提供者(非 null 时每次绘制重新求值概要与按钮文字);见 DynamicState
         private Func<DynamicState> _dynamicStateProvider;
 
+        // 引用对象批量添加回调(可选):把清单中标记为「被当前场景引用」的资源一次性加入目标集合;
+        // 参数为待添加对象数组,返回 true = 添加成功
+        private Func<Object[], bool> _onAddReferenced;
+
+        // 已通过【添加】/【添加引用对象】按钮成功添加的对象 ID(用于把对应按钮置灰)
+        private readonly HashSet<int> _addedReferencedIds = new HashSet<int>();
+
+        // 【添加引用对象】是否已成功执行过(执行后按钮置灰)
+        private bool _referencedAdded;
+
+        // 批量提交前的二次确认门(可选):点击【确定】时先调用,返回 false 则不关窗、不提交
+        private Func<bool> _submitGuard;
+
         // 已通过【添加】按钮成功添加的对象 ID,用于把该行按钮置灰
         // 用 VicToolsUnityCompat.GetStableId() 取值:Unity 6000.4+ 下 GetInstanceID 已是 error 级废弃,
         // 统一走兼容层可在 2021/2022/2023/6000.x 各版本下编译通过
@@ -212,6 +233,16 @@ namespace Vic.Editor
         /// 便于"单项添加"后待添加数量变化时保持显示同步(例如"确定添加（10）"随单项添加递减为"确定添加（7）")。
         /// 为 null 时使用 <c>Show()</c> 传入的静态 summary / confirmButtonText。
         /// </param>
+        /// <param name="submitGuard">
+        /// 批量提交前的二次确认门(可选)。点击【确定】时先调用它:返回 true 才关闭窗口并执行
+        /// <c>onConfirm</c>;返回 false 则保留窗口、不做任何提交(用于数量过大时弹确认框)。
+        /// 为 null 时不做额外校验,直接提交。
+        /// </param>
+        /// <param name="onAddReferenced">
+        /// 引用对象批量添加回调(可选)。传入后,窗口底部显示蓝色【添加引用对象】按钮,
+        /// 点击即把清单中标记为「被当前场景引用」(<see cref="Item.IsReferenced"/>)的资源一次性加入目标集合。
+        /// 返回 true 表示添加成功,窗口会置灰该按钮并弹出提示。
+        /// </param>
         public static VicToolsListConfirmWindow Show(
             string title,
             string summary,
@@ -220,7 +251,9 @@ namespace Vic.Editor
             string confirmButtonText = "确定",
             Action onCancel = null,
             Func<Object, bool> onAddSingle = null,
-            Func<DynamicState> dynamicStateProvider = null)
+            Func<DynamicState> dynamicStateProvider = null,
+            Func<bool> submitGuard = null,
+            Func<Object[], bool> onAddReferenced = null)
         {
             // 关闭已存在的旧实例,避免叠加多个预览窗口
             var existed = Resources.FindObjectsOfTypeAll<VicToolsListConfirmWindow>();
@@ -238,9 +271,49 @@ namespace Vic.Editor
             window._onCancel = onCancel;
             window._onAddSingle = onAddSingle;
             window._dynamicStateProvider = dynamicStateProvider;
+            window._submitGuard = submitGuard;
+            window._onAddReferenced = onAddReferenced;
             window.minSize = new Vector2(560, 360);
             window.ShowUtility();
             return window;
+        }
+
+        // 行文本样式缓存：清单可能上千行,避免每帧为每行新建 GUIStyle
+        private static readonly Dictionary<Color, GUIStyle> _itemLabelStyleCache = new Dictionary<Color, GUIStyle>();
+
+        private static GUIStyle GetItemLabelStyle(Color? color)
+        {
+            if (!color.HasValue) return EditorStyles.label;
+            if (_itemLabelStyleCache.TryGetValue(color.Value, out GUIStyle cached)) return cached;
+            var style = new GUIStyle(EditorStyles.label);
+            style.normal.textColor = color.Value;
+            _itemLabelStyleCache[color.Value] = style;
+            return style;
+        }
+
+        // Ctrl+点击【定位】：单选定位目标对象（替换当前选择，不做累加多选）
+        private static void SelectSingleObject(Object target)
+        {
+            if (!target) return;
+            Selection.activeObject = target;
+        }
+
+        // 收集清单中标记为「被当前场景引用」且尚未添加的对象（按对象去重）
+        private List<Object> CollectReferencedTargets()
+        {
+            var result = new List<Object>();
+            var seen = new HashSet<int>();
+            for (int i = 0; i < _items.Count; i++)
+            {
+                var item = _items[i];
+                if (item == null || !item.IsReferenced || !item.Target) continue;
+                int id = VicToolsUnityCompat.GetStableId(item.Target);
+                if (!seen.Add(id)) continue;
+                // 已通过单行【添加】或本按钮添加过的对象不再重复
+                if (_addedTargetIds.Contains(id) || _addedReferencedIds.Contains(id)) continue;
+                result.Add(item.Target);
+            }
+            return result;
         }
 
         private void OnGUI()
@@ -284,12 +357,27 @@ namespace Vic.Editor
                     if (item == null) continue;
 
                     EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField($"{i + 1}. {item.Text}");
-                    GUI.backgroundColor = Color.white;
+                    EditorGUILayout.LabelField($"{i + 1}. {item.Text}", GetItemLabelStyle(item.TextColor));
+                    // 【定位】按钮沿用行标记色：被当前场景引用的资源，按钮同样标为蓝色
+                    GUI.backgroundColor = item.TextColor.HasValue ? item.TextColor.Value : Color.white;
+                    bool ctrlHeld = Event.current != null && Event.current.control;
                     if (item.Target != null &&
-                        GUILayout.Button("定位", GUILayout.Width(40), GUILayout.Height(18)))
+                        GUILayout.Button(
+                            new GUIContent("定位", ctrlHeld
+                                ? "Ctrl+点击：单选定位该资源"
+                                : "在 Project 窗口中定位该资源"),
+                            GUILayout.Width(40), GUILayout.Height(18)))
                     {
-                        EditorGUIUtility.PingObject(item.Target);
+                        if (ctrlHeld)
+                        {
+                            // Ctrl + 点击：单选定位目标对象（替换当前选择），并 Ping 提示
+                            SelectSingleObject(item.Target);
+                            EditorGUIUtility.PingObject(item.Target);
+                        }
+                        else
+                        {
+                            EditorGUIUtility.PingObject(item.Target);
+                        }
                     }
 
                     GUI.backgroundColor = new Color(0.9f, 0.49f, 0.5f);
@@ -335,10 +423,42 @@ namespace Vic.Editor
             {
                 if (GUILayout.Button(curConfirmText, GUILayout.Width(140), GUILayout.Height(24)))
                 {
+                    // 二次确认门(可选):返回 false 时保留窗口,不关闭、不提交
+                    var guard = _submitGuard;
+                    if (guard != null && !guard.Invoke()) return;
+
                     // 先取出局部引用再 Close():Close 会触发 OnDestroy 清空字段
                     var confirm = _onConfirm;
                     Close();
                     confirm?.Invoke();
+                }
+            }
+            // ── 【添加引用对象】:一键把清单中被当前场景引用的资源加入资源箱(置于最右侧) ──
+            if (_onAddReferenced != null)
+            {
+                var referencedTargets = CollectReferencedTargets();
+                GUI.backgroundColor = new Color(0.35f, 0.65f, 1f);
+                using (new EditorGUI.DisabledScope(referencedTargets.Count == 0 || _referencedAdded))
+                {
+                    if (GUILayout.Button(
+                            new GUIContent($"添加引用对象（{referencedTargets.Count}）",
+                                "一键把清单中被当前场景引用（蓝色标记）的资源加入资源箱"),
+                            GUILayout.Width(170), GUILayout.Height(24)))
+                    {
+                        bool ok = _onAddReferenced(referencedTargets.ToArray());
+                        if (ok)
+                        {
+                            _referencedAdded = true;
+                            foreach (var t in referencedTargets)
+                            {
+                                _addedReferencedIds.Add(VicToolsUnityCompat.GetStableId(t));
+                            }
+                        }
+                        ShowNotification(new GUIContent(ok
+                            ? $"已添加 {referencedTargets.Count} 个引用对象到资源箱"
+                            : "添加引用对象失败"));
+                        Repaint();
+                    }
                 }
             }
             GUI.backgroundColor = Color.white;
@@ -352,7 +472,10 @@ namespace Vic.Editor
             _onCancel = null;
             _onAddSingle = null;
             _dynamicStateProvider = null;
+            _submitGuard = null;
+            _onAddReferenced = null;
             _addedTargetIds.Clear();
+            _addedReferencedIds.Clear();
             _items = new List<Item>();
         }
     }

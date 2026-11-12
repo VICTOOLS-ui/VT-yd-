@@ -3,13 +3,17 @@
 //【性能分析1.7】 对象统计模块添加静态对象统计快速选择
 //【性能分析1.8】 重构：版本号移至本类，与 ScenesTools/ProjectTools 等脚本保持一致
 //【性能分析1.9】 优化信息交互界面。
+//【性能分析2.0】 场景基本信息分栏中添加重要资源占比统计，并且可以快速查看定位资源。
 
 using UnityEngine;
 using UnityEditor;
+using UnityEngine.Video;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.IO;
+using Object = UnityEngine.Object;
+using Vic.Editor;
 
 namespace VicTools
 {
@@ -17,7 +21,7 @@ namespace VicTools
     public class ScenePerformanceAnalyzer : SubWindow
     {
         /// 性能分析器窗口标签名（包含版本号），与 ScenesTools / ProjectTools 等脚本一致，由本类自行管理
-        public const string WindowName = "[性能分析 v1.9]";
+        public const string WindowName = "[性能分析 v2.0]";
 
         // 性能数据
         private PerformanceData _performanceData;
@@ -26,6 +30,12 @@ namespace VicTools
         private bool _debugMode = false; // 调试模式开关
         private float _lastRefreshTime;
         private const float RefreshInterval = 2.0f; // 自动刷新间隔（秒）
+
+        // 批量加入资源箱的数量阈值：超过该数量时点击【确定添加】先弹确认框
+        private const int ResourceBoxBatchConfirmThreshold = 30;
+
+        // 清单中「被当前已加载场景引用」资源的文本颜色（蓝色）
+        private static readonly Color SceneReferencedTextColor = new Color(0.35f, 0.65f, 1f);
 
         // 分类统计
         private readonly Dictionary<string, int> _objectCountByType = new();
@@ -36,6 +46,18 @@ namespace VicTools
         // 资源统计
         private readonly List<Material> _allMaterials = new();
         private readonly List<Texture> _allTextures = new();
+
+        // 重要资源占比统计（模型 / 贴图 / 动画 / 音频 / 视频 / 场景 / 光照数据 / 配置数据）
+        private readonly List<ResourceCategoryStat> _resourceCategoryStats = new();
+        private bool _resourceCategoryDirty = true;
+        private bool _resourceCategoryForceRefresh;
+        private double _lastResourceCollectTime;
+        // 已加载场景依赖集合缓存（GetDependencies 开销较大，场景集合未变化时复用）
+        private string _sceneDependencyCacheKey;
+        private HashSet<string> _sceneDependencyCache;
+        private static Texture2D _resourceCategoryDotTexture;
+        // 色点点击后待打开清单窗口的类别（在重绘阶段打开，避免在事件处理中直接开窗）
+        private ResourceCategoryStat _pendingCategoryWindow;
         
         // 渲染统计
         private int _totalTriangles;
@@ -142,11 +164,21 @@ namespace VicTools
         public override void OnDestroy()
         {
             base.OnDestroy();
+
+            // 释放图例圆点贴图（HideAndDontSave 不会自动回收）
+            if (_resourceCategoryDotTexture != null)
+            {
+                Object.DestroyImmediate(_resourceCategoryDotTexture);
+                _resourceCategoryDotTexture = null;
+            }
         }
 
         public override void OnHierarchyChange()
         {
             base.OnHierarchyChange();
+            // 层级变化（切换场景、增删对象）后重要资源占比需要重新统计（绘制时按节流触发，避免拖拽时频繁扫描）
+            _resourceCategoryDirty = true;
+            InvalidateResourceCategoryDependencyCache();
             // 当场景层级发生变化时，可以触发性能数据刷新
             if (_autoRefresh)
             {
@@ -358,7 +390,6 @@ namespace VicTools
         }
 
         /// 批量设置各分节的折叠状态（_duo1 ~ _duo7）
-        /// </summary>
         /// <param name="expanded">true = 全部展开，false = 全部收起</param>
         private void SetDuoFoldoutState(bool expanded)
         {
@@ -394,6 +425,10 @@ namespace VicTools
             CollectSceneData();
             AnalyzePerformance();
             _lastRefreshTime = Time.realtimeSinceStartup;
+
+            // 场景数据有变化，重要资源占比需要重新统计
+            _resourceCategoryDirty = true;
+            InvalidateResourceCategoryDependencyCache();
         }
 
         /// 收集场景数据
@@ -901,14 +936,819 @@ namespace VicTools
             EditorGUILayout.LabelField(renderPipeline, normalStyle);
             GUI.contentColor = Color.white;
             EditorGUILayout.EndHorizontal();
-            
+
             EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
             EditorGUILayout.LabelField("目标帧率:", normalStyle, GUILayout.Width(80));
             EditorGUILayout.LabelField(Application.targetFrameRate == -1 ? "无限制" : Application.targetFrameRate.ToString(), normalStyle);
             EditorGUILayout.EndHorizontal();
 
+            // 重要资源占比（模型 / 贴图 / 动画 / 音频 / 视频 / 场景 / 光照数据 / 配置数据）
+            DrawResourceCategorySection(subheadingStyle, normalStyle, contentWidth);
+
             EditorGUILayout.EndVertical();
             EditorGUILayout.Space();
+        }
+
+        /// 绘制「重要资源占比」区块（模型 / 贴图 / 动画 / 音频 / 视频 / 场景 / 光照数据 / 配置数据）
+        /// 样式参考 VicToolsWindow 的「代码量」：汇总行 + 比例条 + 图例（色点 + 名称 + 百分比）
+        private void DrawResourceCategorySection(GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
+        {
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("重要资源占比", subheadingStyle);
+
+            // 色点点击：延迟到重绘阶段打开该类别的资源清单窗口
+            if (_pendingCategoryWindow != null && Event.current.type == EventType.Repaint)
+            {
+                var pendingStat = _pendingCategoryWindow;
+                _pendingCategoryWindow = null;
+                OpenResourceCategoryListWindow(pendingStat);
+            }
+
+            // 工程资源变更（导入 / 删除 mp4、wav 等）后自动触发统计刷新
+            if (ScenePerformanceAnalyzerAssetWatcher.HasChanges)
+            {
+                ScenePerformanceAnalyzerAssetWatcher.ConsumeChanges();
+                _resourceCategoryDirty = true;
+                _resourceCategoryForceRefresh = true;
+                InvalidateResourceCategoryDependencyCache();
+            }
+
+            if (_resourceCategoryForceRefresh ||
+                (_resourceCategoryDirty && (_lastResourceCollectTime <= 0 ||
+                                           EditorApplication.timeSinceStartup - _lastResourceCollectTime >= 0.5)))
+            {
+                CollectResourceCategoryStats();
+                _resourceCategoryDirty = false;
+                _resourceCategoryForceRefresh = false;
+                _lastResourceCollectTime = EditorApplication.timeSinceStartup;
+            }
+
+            if (_resourceCategoryStats.Count == 0)
+            {
+                EditorGUILayout.HelpBox("工程内未找到占用体积的模型 / 贴图 / 音频 / 视频资源。", MessageType.Info);
+                return;
+            }
+
+            long totalSize = 0;
+            int totalCount = 0;
+            foreach (var stat in _resourceCategoryStats)
+            {
+                if (stat.size <= 0) continue;
+                totalSize += stat.size;
+                totalCount += stat.count;
+            }
+
+            // 汇总行：资源项数 + 总体积 + 手动刷新按钮
+            EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
+            EditorGUILayout.LabelField($"工程资源 · {totalCount} 项 · {FormatBytes(totalSize)}(源文件)", normalStyle, GUILayout.Width(260));
+            GUILayout.FlexibleSpace();
+
+            // 刷新按钮：内置图标可能取不到，回退到文字，保证按钮可见可点
+            var refreshContent = EditorGUIUtility.IconContent("Profiler.Memory");
+            if (refreshContent.image == null) refreshContent = EditorGUIUtility.IconContent("Refresh");
+            bool refreshHasIcon = refreshContent.image != null;
+            if (!refreshHasIcon) refreshContent = new GUIContent("刷新");
+
+            var refreshStyle = new GUIStyle(GUIStyle.none)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                padding = new RectOffset(4, 4, 2, 2)
+            };
+            if (GUILayout.Button(new GUIContent(refreshContent.image, "重新统计重要资源占比"), refreshStyle,
+                    GUILayout.Width(refreshHasIcon ? 26f : 44f), GUILayout.Height(20)))
+            {
+                _resourceCategoryDirty = true;
+                _resourceCategoryForceRefresh = true;
+                InvalidateResourceCategoryDependencyCache();
+                Parent?.Repaint();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            DrawResourceCategoryRatioBar(totalSize);
+            DrawResourceCategoryLegend(totalSize, contentWidth);
+
+            // 统计口径说明
+            var hintStyle = new GUIStyle(EditorStyles.miniLabel != null ? EditorStyles.miniLabel : EditorStyles.label);
+            hintStyle.normal.textColor = EditorGUIUtility.isProSkin
+                ? new Color(0.65f, 0.65f, 0.68f)
+                : new Color(0.35f, 0.35f, 0.35f);
+            EditorGUILayout.LabelField("口径：工程内同类型资源去重统计（体积按源文件大小），括号内为当前已加载场景的引用数；点击色点可查看该类资源清单", hintStyle);
+        }
+
+        /// 绘制重要资源比例条（各类别按占用体积占比着色）
+        private void DrawResourceCategoryRatioBar(long totalSize)
+        {
+            var barRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none, GUILayout.Height(12), GUILayout.ExpandWidth(true));
+
+            // 轨道底色（未被资源占满时可见）
+            EditorGUI.DrawRect(barRect, new Color(0.22f, 0.22f, 0.24f));
+            if (totalSize <= 0) return;
+
+            float x = barRect.x;
+            foreach (var stat in _resourceCategoryStats)
+            {
+                float width = barRect.width * (stat.size / (float)totalSize);
+                if (width <= 0f) continue;
+                EditorGUI.DrawRect(new Rect(x, barRect.y, width, barRect.height), stat.color);
+                x += width;
+            }
+        }
+
+        /// 绘制重要资源图例（色点 + 名称 + 百分比 + 体积/数量，超出宽度自动换行）
+        private void DrawResourceCategoryLegend(long totalSize, float contentWidth)
+        {
+            var labelStyle = new GUIStyle(EditorStyles.miniLabel != null ? EditorStyles.miniLabel : EditorStyles.label);
+            labelStyle.normal.textColor = EditorGUIUtility.isProSkin
+                ? new Color(0.78f, 0.78f, 0.80f)
+                : new Color(0.25f, 0.25f, 0.25f);
+
+            const float dotSize = 8f;
+            const float lineHeight = 18f;
+            const float itemSpacing = 16f;
+
+            // 占比归零的类别不展示（色点 + 名称等一律跳过）
+            var visibleStats = new List<ResourceCategoryStat>();
+            foreach (var stat in _resourceCategoryStats)
+            {
+                if (stat.size <= 0) continue;
+                visibleStats.Add(stat);
+            }
+            if (visibleStats.Count == 0) return;
+
+            // 计算每项的文本内容与宽度
+            var contents = new GUIContent[visibleStats.Count];
+            var itemWidths = new float[visibleStats.Count];
+            float totalWidth = 0f;
+            for (int i = 0; i < visibleStats.Count; i++)
+            {
+                var stat = visibleStats[i];
+                float percent = totalSize > 0 ? stat.size * 100f / totalSize : 0f;
+                contents[i] = new GUIContent($"{stat.name} {percent:F2}% · {FormatBytes(stat.size)} · {stat.count} 项（引用 {stat.sceneRefCount}）");
+                itemWidths[i] = dotSize + 5f + labelStyle.CalcSize(contents[i]).x + itemSpacing;
+                totalWidth += itemWidths[i];
+            }
+
+            // 面板位于 ScrollView 内，可用宽度按区块宽度估算
+            float availableWidth = Mathf.Max(140f, contentWidth - 46f);
+            int rowCount = Mathf.Max(1, Mathf.CeilToInt(totalWidth / availableWidth));
+            var areaRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none, GUILayout.Height(rowCount * lineHeight), GUILayout.ExpandWidth(true));
+
+            float x = areaRect.x;
+            float y = areaRect.y;
+            for (int i = 0; i < visibleStats.Count; i++)
+            {
+                // 超出右边界则换行
+                if (x > areaRect.x && x + itemWidths[i] > areaRect.xMax)
+                {
+                    x = areaRect.x;
+                    y += lineHeight;
+                }
+
+                // 色点（可点击：打开该类别的资源清单窗口）
+                var dotRect = new Rect(x, y + (lineHeight - dotSize) * 0.5f, dotSize, dotSize);
+                var hotRect = new Rect(x - 3f, y, dotSize + 6f, lineHeight);
+                bool hovered = hotRect.Contains(Event.current.mousePosition);
+                if (hovered) EditorGUIUtility.AddCursorRect(hotRect, MouseCursor.Link);
+
+                var prevColor = GUI.color;
+                GUI.color = visibleStats[i].color;
+                // 悬停时放大圆点，提示可点击
+                var drawRect = hovered
+                    ? new Rect(dotRect.x - 2f, dotRect.y - 2f, dotRect.width + 4f, dotRect.height + 4f)
+                    : dotRect;
+                GUI.DrawTexture(drawRect, GetResourceCategoryDotTexture());
+                GUI.color = prevColor;
+
+                // 点击色点：记录待打开的类别，在下一次重绘时打开清单窗口（避免在事件处理中直接开窗）
+                if (hovered && Event.current.type == EventType.MouseDown)
+                {
+                    _pendingCategoryWindow = visibleStats[i];
+                    Event.current.Use();
+                    Parent?.Repaint();
+                }
+
+                // 名称 + 百分比 + 体积/数量
+                var textRect = new Rect(x + dotSize + 5f, y, itemWidths[i], lineHeight);
+                GUI.Label(textRect, contents[i], labelStyle);
+
+                x += itemWidths[i];
+            }
+        }
+
+        // 打开指定类别的资源清单窗口（共用 Vic.Editor.VicToolsListConfirmWindow）
+        // 清单支持【定位】（Ping 到 Project）与【添加】（加入资源箱）
+        private void OpenResourceCategoryListWindow(ResourceCategoryStat stat)
+        {
+            if (stat == null || stat.paths == null || stat.paths.Count == 0) return;
+
+            var sizeMap = GetAssetFileSizeMap(stat.paths);
+
+            // 清单行数据：同时取源文件体积与引擎运行时内存（后者与 Inspector 的 Size 同口径）
+            var rows = new List<ResourceListRow>();
+            foreach (var path in stat.paths)
+            {
+                long fileSize = sizeMap.TryGetValue(path, out var value) ? value : 0;
+                rows.Add(new ResourceListRow
+                {
+                    path = path,
+                    asset = LoadMainAssetSafe(path),
+                    fileSize = fileSize,
+                    memorySize = GetAssetRuntimeMemorySize(path),
+                });
+            }
+
+            // 按有效体积降序：内存优先，取不到内存时回退源文件体积
+            rows.Sort((a, b) => GetEffectiveSize(b).CompareTo(GetEffectiveSize(a)));
+
+            // 清单项：文本 = 路径 + 体积（内存 / 源文件）；Target = 资源资产（供【定位】与【添加】使用）
+            // 被当前已加载场景引用的资源，文本标为蓝色，便于快速识别已占用资源
+            var sceneDependencyPaths = CollectLoadedSceneDependencyPaths();
+            var items = new List<VicToolsListConfirmWindow.Item>();
+            var pendingAssets = new List<Object>();
+            foreach (var row in rows)
+            {
+                bool sceneReferenced = !string.IsNullOrEmpty(row.path) && sceneDependencyPaths.Contains(row.path);
+                items.Add(new VicToolsListConfirmWindow.Item(BuildResourceRowText(row), row.asset,
+                    sceneReferenced ? SceneReferencedTextColor : (Color?)null, sceneReferenced));
+                if (row.asset && !IsAssetInResourceBox(row.asset)) pendingAssets.Add(row.asset);
+            }
+
+            // 共用窗口（Vic.Editor.VicToolsListConfirmWindow）：非模态，用户确认后才写入资源箱
+            // onAddSingle 非 null 时窗口才会渲染每行的【添加】按钮，故这里始终传入
+            VicToolsListConfirmWindow.Show(
+                $"重要资源占比 · {stat.name}",
+                BuildResourceCategorySummary(stat, pendingAssets.Count),
+                items,
+                () => AddAssetsToResourceBox(stat, pendingAssets),
+                $"确定添加（{pendingAssets.Count}）",
+                () => Debug.Log($"[PerformanceAnalyzer] 已取消添加{stat.name}资源"),
+                obj => AddSingleAssetToResourceBox(obj, pendingAssets),
+                () => new VicToolsListConfirmWindow.DynamicState
+                {
+                    Summary = BuildResourceCategorySummary(stat, pendingAssets.Count),
+                    ConfirmButtonText = $"确定添加（{pendingAssets.Count}）",
+                    ConfirmDisabled = pendingAssets.Count <= 0,
+                },
+                () => ShouldConfirmBatchAdd(stat, pendingAssets.Count),
+                objs => AddReferencedAssetsToResourceBox(objs));
+        }
+
+        // 安全加载资源主资产（供清单行【定位】/【添加】使用）
+        // 光照数据资产（.lighting）一旦经 AssetDatabase 实例化，Unity 内部会解析其烘焙版本号，
+        // 版本不匹配时直接报 "Invalid version provided - release type(a|b|f|p|x) or end of string expected"，
+        // 且该报错不是托管异常、无法用 try/catch 拦下，只能对这类资源不加载对象
+        private static Object LoadMainAssetSafe(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            if (path.EndsWith(".lighting", System.StringComparison.OrdinalIgnoreCase)) return null;
+            try
+            {
+                return AssetDatabase.LoadMainAssetAtPath(path);
+            }
+            catch (System.Exception)
+            {
+                return null;
+            }
+        }
+
+        // 取资源在引擎中的运行时内存占用（与 Inspector 的 Size 同口径）
+        // 模型等复合资源按路径下所有子资源累加（网格 + 贴图 + 材质）
+        private static long GetAssetRuntimeMemorySize(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return 0;
+            // 场景资产（.unity）：加载后属于场景对象，读取其内存会触发
+            // "Do not use ReadObjectThreaded on scene objects!"，这里直接跳过，改用源文件体积口径
+            if (path.EndsWith(".unity", System.StringComparison.OrdinalIgnoreCase)) return 0;
+            // 光照数据资产（.lighting）：加载会触发 Unity 内部版本解析报错
+            // "Invalid version provided - release type(a|b|f|p|x) or end of string expected"，
+            // 这里直接跳过，改用源文件体积口径
+            if (path.EndsWith(".lighting", System.StringComparison.OrdinalIgnoreCase)) return 0;
+
+            long total = 0;
+            try
+            {
+                var assets = AssetDatabase.LoadAllAssetsAtPath(path);
+                foreach (var asset in assets)
+                {
+                    if (!asset) continue;
+                    // 兜底：光照数据资产不参与运行时内存统计
+                    if (asset is UnityEditor.LightingDataAsset) continue;
+                    total += UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(asset);
+                }
+            }
+            catch (System.Exception)
+            {
+                // 读取失败按 0 处理，不影响清单展示
+            }
+            return total;
+        }
+
+        // 行的有效体积：内存优先，取不到时回退源文件体积
+        private static long GetEffectiveSize(ResourceListRow row)
+        {
+            if (row == null) return 0;
+            return row.memorySize > 0 ? row.memorySize : row.fileSize;
+        }
+
+        // 组装清单行的显示文本：内存占用与源文件体积并列，避免与 Inspector 数值混淆
+        private static string BuildResourceRowText(ResourceListRow row)
+        {
+            // 对象未能加载（如光照数据资产）的行标注一下，避免用户误以为按钮失效
+            string note = row.asset == null ? "  [无法加载对象]" : string.Empty;
+            if (row.memorySize > 0)
+            {
+                return $"{row.path}  ({FormatBytes(row.memorySize)} 内存 / 源文件 {FormatBytes(row.fileSize)}){note}";
+            }
+            return $"{row.path}  ({FormatBytes(row.fileSize)} 源文件){note}";
+        }
+
+        // 组装资源清单窗口的概要文字
+        private static string BuildResourceCategorySummary(ResourceCategoryStat stat, int pendingCount)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"{stat.name}：共 {stat.count} 项 / {FormatBytes(stat.size)}（占比按源文件体积统计）");
+            sb.AppendLine($"其中当前已加载场景已引用 {stat.sceneRefCount} 项；待添加 {pendingCount} 项");
+            sb.Append("行内体积为「引擎内存占用 / 源文件体积」：内存口径与 Inspector 的 Size 一致，源文件口径为磁盘占用。");
+            sb.Append("蓝色文本表示该资源已被当前已加载场景引用。");
+            sb.Append("行末【定位】可在 Project 中定位资源，【添加】可单独加入资源箱。");
+            sb.Append($"待添加超过 {ResourceBoxBatchConfirmThreshold} 项时，点击【确定添加】会再弹一次数量确认。");
+            return sb.ToString();
+        }
+
+        // 单个资源加入资源箱（清单行末【添加】按钮）
+        private static bool AddSingleAssetToResourceBox(Object obj, List<Object> pendingAssets)
+        {
+            if (!obj) return false;
+            var scenesTools = GetScenesToolsOrOpen();
+            if (scenesTools == null)
+            {
+                Debug.LogWarning("[PerformanceAnalyzer] 场景工具未打开，无法添加到资源箱");
+                return false;
+            }
+            bool ok = scenesTools.AddObjectToResourceBox(obj);
+            if (ok && pendingAssets != null) pendingAssets.Remove(obj);
+            return ok;
+        }
+
+        // 批量加入资源箱前的一次性确认：待添加数量超过阈值时弹确认框
+        // 返回 true = 继续添加；返回 false = 取消（清单窗口保留，可继续逐项处理）
+        private static bool ShouldConfirmBatchAdd(ResourceCategoryStat stat, int pendingCount)
+        {
+            if (pendingCount <= ResourceBoxBatchConfirmThreshold) return true;
+
+            string category = stat != null ? stat.name : "重要";
+            bool confirmed = EditorUtility.DisplayDialog(
+                "确认批量添加到资源箱",
+                $"即将向资源箱添加 {pendingCount} 项{category}资源（已超过 {ResourceBoxBatchConfirmThreshold} 项）。\n" +
+                "资源箱是工具的对象工作清单，不会改变打包内容，请确认数量无误。",
+                "确定添加",
+                "取消");
+            if (!confirmed)
+            {
+                Debug.Log($"[PerformanceAnalyzer] 已取消批量添加{category}资源（{pendingCount} 项）");
+            }
+            return confirmed;
+        }
+
+        // 批量加入资源箱（清单窗口【确定添加】按钮）
+        private static void AddAssetsToResourceBox(ResourceCategoryStat stat, List<Object> pendingAssets)
+        {
+            var scenesTools = GetScenesToolsOrOpen();
+            if (scenesTools == null)
+            {
+                Debug.LogWarning("[PerformanceAnalyzer] 场景工具未打开，无法添加到资源箱");
+                return;
+            }
+
+            int added = 0;
+            int skipped = 0;
+            if (pendingAssets != null)
+            {
+                foreach (var asset in pendingAssets)
+                {
+                    if (!asset) continue;
+                    if (scenesTools.AddObjectToResourceBox(asset)) added++;
+                    else skipped++;
+                }
+                pendingAssets.Clear();
+            }
+            Debug.Log($"[PerformanceAnalyzer] 已将{stat.name}资源 {added} 项添加到资源箱" +
+                      (skipped > 0 ? $"，跳过 {skipped} 项（已在资源箱中）" : ""));
+        }
+
+        // 一键添加清单中的引用对象到资源箱（清单窗口蓝色【添加引用对象】按钮）
+        private static bool AddReferencedAssetsToResourceBox(Object[] assets)
+        {
+            if (assets == null || assets.Length == 0)
+            {
+                Debug.LogWarning("[PerformanceAnalyzer] 当前列表中没有引用对象可添加");
+                return false;
+            }
+            var scenesTools = GetScenesToolsOrOpen();
+            if (scenesTools == null)
+            {
+                Debug.LogWarning("[PerformanceAnalyzer] 场景工具未打开，无法添加到资源箱");
+                return false;
+            }
+
+            int added = 0;
+            int skipped = 0;
+            foreach (var asset in assets)
+            {
+                if (!asset) continue;
+                if (scenesTools.AddObjectToResourceBox(asset)) added++;
+                else skipped++;
+            }
+            Debug.Log($"[PerformanceAnalyzer] 已将引用对象 {added} 项添加到资源箱" +
+                      (skipped > 0 ? $"，跳过 {skipped} 项（已在资源箱中）" : ""));
+            return added > 0;
+        }
+
+        // 查询资源是否已在资源箱中（依赖场景工具实例）
+        private static bool IsAssetInResourceBox(Object obj)
+        {
+            if (!obj) return false;
+            var scenesTools = ScenesTools.ActiveInstance;
+            return scenesTools != null && scenesTools.IsInResourceBox(obj);
+        }
+
+        // 取场景工具实例；尚未打开时自动打开【场景工具】独立窗口（OnEnable 同步创建实例并注册）
+        private static ScenesTools GetScenesToolsOrOpen()
+        {
+            if (ScenesTools.ActiveInstance != null) return ScenesTools.ActiveInstance;
+            try
+            {
+                var window = EditorWindow.GetWindow<WinScenesTools>("场景工具");
+                if (window != null)
+                {
+                    window.minSize = new Vector2(490, 562);
+                    window.maxSize = new Vector2(1680, 1832);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[PerformanceAnalyzer] 打开场景工具失败：{ex.Message}");
+            }
+            return ScenesTools.ActiveInstance;
+        }
+
+        /// 收集重要资源（模型 / 贴图 / 音频 / 视频）并按类别统计占用体积。
+        /// 统计口径：工程内同类型资源全量（去重）+ 当前场景引用数；
+        /// 因此仅把 mp4 / wav 导入工程（即使尚未挂到场景对象）也能体现在占比中。
+        private void CollectResourceCategoryStats()
+        {
+            _resourceCategoryStats.Clear();
+
+            // 场景中被引用的资源（用于统计「场景引用数」以及内置资源兜底体积）
+            var sceneModelPaths = new HashSet<string>();
+            var sceneTexturePaths = new HashSet<string>();
+            var sceneAudioPaths = new HashSet<string>();
+            var sceneVideoPaths = new HashSet<string>();
+            var meshFallback = new List<Mesh>();
+            var audioFallback = new List<AudioClip>();
+            var videoFallback = new List<VideoClip>();
+
+            foreach (var gameObject in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
+            {
+                if (!gameObject) continue;
+
+                // 模型：MeshFilter / SkinnedMeshRenderer
+                var meshFilter = gameObject.GetComponent<MeshFilter>();
+                if (meshFilter && meshFilter.sharedMesh)
+                {
+                    if (!AddAssetPath(sceneModelPaths, meshFilter.sharedMesh)) meshFallback.Add(meshFilter.sharedMesh);
+                }
+
+                var skinnedRenderer = gameObject.GetComponent<SkinnedMeshRenderer>();
+                if (skinnedRenderer && skinnedRenderer.sharedMesh)
+                {
+                    if (!AddAssetPath(sceneModelPaths, skinnedRenderer.sharedMesh)) meshFallback.Add(skinnedRenderer.sharedMesh);
+                }
+
+                // 贴图：材质上引用的纹理
+                var renderer = gameObject.GetComponent<Renderer>();
+                if (renderer)
+                {
+                    foreach (var material in renderer.sharedMaterials)
+                    {
+                        if (!material) continue;
+                        var shader = material.shader;
+                        if (!shader) continue;
+                        for (var i = 0; i < ShaderUtil.GetPropertyCount(shader); i++)
+                        {
+                            if (ShaderUtil.GetPropertyType(shader, i) != ShaderUtil.ShaderPropertyType.TexEnv) continue;
+                            var texture = material.GetTexture(ShaderUtil.GetPropertyName(shader, i));
+                            if (!texture) continue;
+                            AddAssetPath(sceneTexturePaths, texture);
+                        }
+                    }
+                }
+
+                // 音频：AudioSource
+                var audioSource = gameObject.GetComponent<AudioSource>();
+                if (audioSource && audioSource.clip)
+                {
+                    if (!AddAssetPath(sceneAudioPaths, audioSource.clip)) audioFallback.Add(audioSource.clip);
+                }
+
+                // 视频：VideoPlayer
+                var videoPlayer = gameObject.GetComponent<VideoPlayer>();
+                if (videoPlayer && videoPlayer.clip)
+                {
+                    if (!AddAssetPath(sceneVideoPaths, videoPlayer.clip)) videoFallback.Add(videoPlayer.clip);
+                }
+            }
+
+            // 工程内同类型资源（与场景引用结果合并去重）
+            var projectModelPaths = CollectProjectAssetPaths("t:Mesh");
+            // 贴图口径放宽为 t:Texture：除 Texture2D 外还包含 Cubemap / Texture3D / Texture2DArray 等
+            var projectTexturePaths = CollectProjectAssetPaths("t:Texture");
+            var projectAnimationPaths = CollectProjectAssetPaths("t:AnimationClip");
+            var projectAudioPaths = CollectProjectAssetPaths("t:AudioClip");
+            var projectVideoPaths = CollectProjectAssetPaths("t:VideoClip");
+            var projectScenePaths = CollectProjectAssetPaths("t:Scene");
+            var projectLightingPaths = CollectProjectAssetPaths("t:LightingDataAsset");
+            var projectConfigPaths = CollectProjectAssetPaths("t:ScriptableObject");
+
+            // 动画与模型可能同源（fbx 内同时含网格与动画）：剔除与模型类重复的路径，避免占比重复计算
+            projectAnimationPaths.ExceptWith(projectModelPaths);
+            // 贴图同理：少数 .asset 内同时嵌有网格与贴图，模型类已计入该文件体积，此处不再重复计
+            projectTexturePaths.ExceptWith(projectModelPaths);
+            // 配置数据与光照数据可能落在同一 .asset 上：已被光照数据类计入的不再重复计
+            projectConfigPaths.ExceptWith(projectLightingPaths);
+
+            // 已加载场景的依赖集合：用于统计各类别「被场景引用」的数量（能覆盖材质 / 预制体等间接引用）
+            var sceneDependencyPaths = CollectLoadedSceneDependencyPaths();
+
+            // 配色：按色相均匀铺开（红-橙-黄绿-绿-青-蓝-紫），相邻类别色相间隔 >= 40°，
+            // 便于比例条并排与图例色点区分；配置数据用低饱和灰蓝，与彩色类别天然区分
+            AddResourceCategoryStat("模型", new Color(0.20f, 0.44f, 0.94f), projectModelPaths, sceneModelPaths,
+                GetRuntimeMemorySize(meshFallback));
+            AddResourceCategoryStat("贴图", new Color(0.16f, 0.74f, 0.34f), projectTexturePaths, sceneTexturePaths, 0);
+            AddResourceCategoryStat("动画", new Color(0.72f, 0.80f, 0.16f), projectAnimationPaths, null, 0, -1,
+                sceneDependencyPaths);
+            AddResourceCategoryStat("音频", new Color(0.95f, 0.58f, 0.12f), projectAudioPaths, sceneAudioPaths,
+                GetRuntimeMemorySize(audioFallback));
+            AddResourceCategoryStat("视频", new Color(0.66f, 0.36f, 0.92f), projectVideoPaths, sceneVideoPaths,
+                GetRuntimeMemorySize(videoFallback));
+            AddResourceCategoryStat("场景", new Color(0.10f, 0.74f, 0.78f), projectScenePaths, null, 0,
+                GetLoadedSceneCount());
+            AddResourceCategoryStat("光照数据", new Color(0.90f, 0.30f, 0.26f), projectLightingPaths, null, 0, -1,
+                sceneDependencyPaths);
+            AddResourceCategoryStat("配置数据", new Color(0.66f, 0.68f, 0.72f), projectConfigPaths, null, 0, -1,
+                sceneDependencyPaths);
+
+            // 按体积降序，图例顺序与比例条一致
+            _resourceCategoryStats.Sort((a, b) => b.size.CompareTo(a.size));
+        }
+
+        // 收集已加载场景的依赖资产集合（含场景自身），用于统计各类别「被场景引用」的数量
+        // 场景集合未变化时复用缓存（GetDependencies 开销大，而面板每 2 秒刷新一次）
+        private HashSet<string> CollectLoadedSceneDependencyPaths()
+        {
+            var scenePaths = new List<string>();
+            try
+            {
+                int sceneCount = UnityEngine.SceneManagement.SceneManager.sceneCount;
+                for (int i = 0; i < sceneCount; i++)
+                {
+                    var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                    if (!scene.IsValid() || !scene.isLoaded) continue;
+                    if (string.IsNullOrEmpty(scene.path)) continue;
+                    scenePaths.Add(scene.path);
+                }
+            }
+            catch (System.Exception)
+            {
+                return new HashSet<string>();
+            }
+
+            scenePaths.Sort();
+            string cacheKey = string.Join("|", scenePaths);
+            if (_sceneDependencyCache != null && cacheKey == _sceneDependencyCacheKey) return _sceneDependencyCache;
+
+            var result = new HashSet<string>();
+            foreach (var path in scenePaths)
+            {
+                result.Add(path);
+                try
+                {
+                    foreach (var dep in AssetDatabase.GetDependencies(path, true))
+                    {
+                        if (!string.IsNullOrEmpty(dep)) result.Add(dep);
+                    }
+                }
+                catch (System.Exception)
+                {
+                    // 单个场景依赖收集失败时跳过，不影响其它场景
+                }
+            }
+
+            _sceneDependencyCacheKey = cacheKey;
+            _sceneDependencyCache = result;
+            return result;
+        }
+
+        // 清除已加载场景依赖集合缓存（层级 / 资产变化后依赖关系可能已改变）
+        private void InvalidateResourceCategoryDependencyCache()
+        {
+            _sceneDependencyCacheKey = null;
+            _sceneDependencyCache = null;
+        }
+
+        // 已加载且带工程内路径的场景数量（作为「场景」类别的场景引用数）
+        private static int GetLoadedSceneCount()
+        {
+            int count = 0;
+            try
+            {
+                int sceneCount = UnityEngine.SceneManagement.SceneManager.sceneCount;
+                for (int i = 0; i < sceneCount; i++)
+                {
+                    var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                    if (scene.IsValid() && scene.isLoaded && !string.IsNullOrEmpty(scene.path)) count++;
+                }
+            }
+            catch (System.Exception)
+            {
+                // 统计失败按 0 处理
+            }
+            return count;
+        }
+
+        /// 收集工程内指定类型的全部资源路径（仅统计 Assets 目录，排除 Packages 内置资源）
+        private static HashSet<string> CollectProjectAssetPaths(string searchFilter)
+        {
+            var paths = new HashSet<string>();
+            try
+            {
+                foreach (var guid in AssetDatabase.FindAssets(searchFilter))
+                {
+                    var path = AssetDatabase.GUIDToAssetPath(guid);
+                    if (string.IsNullOrEmpty(path)) continue;
+                    if (!path.StartsWith("Assets/", System.StringComparison.OrdinalIgnoreCase)) continue;
+                    paths.Add(path);
+                }
+            }
+            catch (System.Exception)
+            {
+                // 资源索引异常时忽略，保证面板不报错
+            }
+            return paths;
+        }
+
+        /// 记录一个资源类别（工程内资源与场景引用合并去重）。
+        /// 体积为 0（占比归零）的类别不参与统计，界面上不显示色点与名称。
+        /// 场景引用数取值优先级：sceneRefCountOverride（>=0）→ 场景依赖集合交集 → scenePaths 数量。
+        private void AddResourceCategoryStat(string name, Color color, HashSet<string> projectPaths,
+            HashSet<string> scenePaths, long fallbackSize, int sceneRefCountOverride = -1,
+            HashSet<string> sceneDependencyPaths = null)
+        {
+            var allPaths = new HashSet<string>(projectPaths);
+            if (scenePaths != null) allPaths.UnionWith(scenePaths);
+            if (allPaths.Count <= 0 && fallbackSize <= 0) return;
+
+            // 逐个文件取源文件体积（同时用于清单窗口显示与按体积排序）
+            var sizeMap = GetAssetFileSizeMap(allPaths);
+            long size = fallbackSize;
+            foreach (var kv in sizeMap) size += kv.Value;
+            if (size <= 0) return;
+
+            // 场景引用数
+            int sceneRefCount;
+            if (sceneRefCountOverride >= 0)
+            {
+                sceneRefCount = sceneRefCountOverride;
+            }
+            else if (sceneDependencyPaths != null)
+            {
+                sceneRefCount = 0;
+                foreach (var path in allPaths)
+                {
+                    if (sceneDependencyPaths.Contains(path)) sceneRefCount++;
+                }
+            }
+            else
+            {
+                sceneRefCount = scenePaths != null ? scenePaths.Count : 0;
+            }
+
+            // 按体积降序，便于在清单窗口里优先看到大文件
+            var orderedPaths = new List<string>(allPaths);
+            orderedPaths.Sort((a, b) => sizeMap[b].CompareTo(sizeMap[a]));
+
+            _resourceCategoryStats.Add(new ResourceCategoryStat(name, color, allPaths.Count, size, sceneRefCount,
+                orderedPaths));
+        }
+
+        // 批量取资源源文件体积（路径 → 字节数）
+        private static Dictionary<string, long> GetAssetFileSizeMap(IEnumerable<string> assetPaths)
+        {
+            var result = new Dictionary<string, long>();
+            string projectRoot = GetProjectRootPath();
+            foreach (var path in assetPaths)
+            {
+                if (string.IsNullOrEmpty(path)) continue;
+                if (result.ContainsKey(path)) continue;
+                try
+                {
+                    var fileInfo = new FileInfo(path);
+                    // 相对路径基于当前工作目录解析失败时，改用工程根目录拼接
+                    if (!fileInfo.Exists && !string.IsNullOrEmpty(projectRoot))
+                    {
+                        fileInfo = new FileInfo(Path.Combine(projectRoot, path));
+                    }
+                    result[path] = fileInfo.Exists ? fileInfo.Length : 0;
+                }
+                catch (System.Exception)
+                {
+                    // 读取失败的文件按 0 体积处理，不影响整体统计
+                    result[path] = 0;
+                }
+            }
+            return result;
+        }
+
+        /// 尝试把资源登记到路径集合（返回 false 表示没有工程内路径，需要走内存统计兜底）
+        private static bool AddAssetPath(HashSet<string> assetPaths, Object asset)
+        {
+            var path = AssetDatabase.GetAssetPath(asset);
+            if (string.IsNullOrEmpty(path)) return false;
+            assetPaths.Add(path);
+            return true;
+        }
+
+        /// 获取工程根目录（Assets 的上一级），失败时返回 null
+        private static string GetProjectRootPath()
+        {
+            try
+            {
+                var assetsDirectory = new DirectoryInfo(Application.dataPath);
+                return assetsDirectory.Parent?.FullName;
+            }
+            catch (System.Exception)
+            {
+                return null;
+            }
+        }
+
+        /// 统计无工程内路径资源（内置资源 / 运行时生成）的内存占用
+        private static long GetRuntimeMemorySize(IEnumerable<Object> assets)
+        {
+            long total = 0;
+            foreach (var asset in assets)
+            {
+                if (!asset) continue;
+                total += UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(asset);
+            }
+            return total;
+        }
+
+        /// 字节数转可读体积文本
+        private static string FormatBytes(long bytes)
+        {
+            if (bytes <= 0) return "0 B";
+            const double kb = 1024d;
+            const double mb = kb * 1024d;
+            const double gb = mb * 1024d;
+            if (bytes >= gb) return $"{bytes / gb:F2} GB";
+            if (bytes >= mb) return $"{bytes / mb:F2} MB";
+            if (bytes >= kb) return $"{bytes / kb:F1} KB";
+            return $"{bytes} B";
+        }
+
+        /// 获取图例色点贴图（抗锯齿圆形，懒创建并缓存）
+        private static Texture2D GetResourceCategoryDotTexture()
+        {
+            if (_resourceCategoryDotTexture != null) return _resourceCategoryDotTexture;
+
+            const int size = 32;
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+
+            var pixels = new Color32[size * size];
+            float radius = size * 0.5f - 1f;
+            float center = size * 0.5f;
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = x + 0.5f - center;
+                    float dy = y + 0.5f - center;
+                    float distance = Mathf.Sqrt(dx * dx + dy * dy);
+                    float alpha = Mathf.Clamp01(radius - distance + 0.5f);
+                    pixels[y * size + x] = new Color32(255, 255, 255, (byte)(alpha * 255f));
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply();
+            _resourceCategoryDotTexture = texture;
+            return _resourceCategoryDotTexture;
         }
 
         /// 绘制渲染管线信息部分
@@ -4794,6 +5634,48 @@ namespace VicTools
         public int totalTriangles;
         public int totalVertices;
         public long textureMemory;
+    }
+
+    /// 重要资源类别统计（模型 / 贴图 / 音频 / 视频）
+    [System.Serializable]
+    public class ResourceCategoryStat
+    {
+        /// 类别名称
+        public string name;
+        /// 类别配色（比例条与图例共用）
+        public Color color;
+        /// 资源数量（去重后的独立资源个数）
+        public int count;
+        /// 占用体积（字节）
+        public long size;
+        /// 其中被当前场景引用的资源数量
+        public int sceneRefCount;
+        /// 资源路径明细（按体积降序），点击色点时用于生成清单窗口
+        public List<string> paths = new List<string>();
+
+        public ResourceCategoryStat(string name, Color color, int count, long size, int sceneRefCount,
+            List<string> paths)
+        {
+            this.name = name;
+            this.color = color;
+            this.count = count;
+            this.size = size;
+            this.sceneRefCount = sceneRefCount;
+            this.paths = paths ?? new List<string>();
+        }
+    }
+
+    // 资源清单行数据：路径 + 源文件体积 + 引擎运行时内存占用
+    public class ResourceListRow
+    {
+        // 资源路径
+        public string path;
+        // 资源主资产（供【定位】与【添加】使用）
+        public Object asset;
+        // 源文件体积（磁盘字节数）
+        public long fileSize;
+        // 引擎运行时内存占用（字节数，与 Inspector 的 Size 同口径）
+        public long memorySize;
     }
 
     /// 性能警告类

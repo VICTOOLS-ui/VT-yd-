@@ -2304,6 +2304,14 @@ public class ResourceBoxRecoveryItem
             _resourceBoxDisplayNames[obj] = displayName;
         }
 
+        // 查询对象是否已在资源箱中(公开只读 API,供其它工具的确认窗口判断能否添加)
+        // 返回 true = 已在资源箱中
+        public bool IsInResourceBox(Object obj)
+        {
+            if (!obj) return false;
+            return _resourceBox.Contains(obj);
+        }
+
         /// 把单个对象添加到资源箱(公开 API,供确认窗口【添加】按钮等外部工具调用)
         /// <remarks>
         /// 与 <see cref="AddSelectedToResourceBox"/> 的差异:只处理传入的单个对象,而非当前选中集。
@@ -5952,10 +5960,8 @@ public class ResourceBoxRecoveryItem
             }
         }
 
-        /// <summary>
         /// v3.7 新增：判断 raw 快照与 displayName 描述的对象是否"同类型同名"（身份一致性校验）。
         /// 用于识别"索引串位"产生的 raw —— 它的 type/name 其实属于列表里的另一个对象。
-        /// </summary>
         private static bool IsNullSlotIdentityMatch(ResourceBoxRecoveryItem raw, string dispType, string dispName)
         {
             if (raw == null) return false;
@@ -5968,13 +5974,11 @@ public class ResourceBoxRecoveryItem
             return true;
         }
 
-        /// <summary>
         /// v3.7 新增：校验 guid 是否真的指向 displayName 描述的那个对象。
         ///   · 资产 GUID：解析到资源且名字/类型一致才算匹配；
         ///     资源当前不存在（被删除/尚未导入）时保留 GUID，资源回来后仍可自动恢复；
         ///   · 场景对象标识符（ROOT:/SCENE:/INSTANCE:/GLOBALID:）：交由场景信息校验，视为匹配。
         /// 不匹配说明该 guid 属于别的对象（索引串位），必须丢弃并归一为 NULL:OBJECT。
-        /// </summary>
         private static bool IsNullSlotGuidMatch(string guid, string dispType, string dispName)
         {
             if (string.IsNullOrEmpty(guid) || guid == "NULL:OBJECT") return false;
@@ -5992,10 +5996,8 @@ public class ResourceBoxRecoveryItem
             return true;
         }
 
-        /// <summary>
         /// v3.7 新增：判断某个灰色槽位是否是"某个对象的同名同类型占位"。
         /// 优先用 displayName 里的 (类型, 来源) 与对象比对；没有 displayName 时才退回 raw 快照的类型名。
-        /// </summary>
         private bool IsNullSlotMatchingObject(int slotIndex, string objBaseType, string objSourceTag, string objName)
         {
             if (_nullObjectDisplayNames.TryGetValue(slotIndex, out var dn) && !string.IsNullOrEmpty(dn))
@@ -6022,11 +6024,9 @@ public class ResourceBoxRecoveryItem
             return false;
         }
 
-        /// <summary>
         /// v3.7 新增：添加有效对象前，清理列表里"与它同名同类型"的灰色占位。
         /// 灰色占位是对象曾经没被解析出来的历史残留；当同一个对象已经能正常加载时，
         /// 那个占位就是纯冗余 —— 也就是用户看到的"重名的灰色成员"。
-        /// </summary>
         private void RemoveStaleNullPlaceholderFor(Object obj)
         {
             if (!obj) return;
@@ -6048,10 +6048,8 @@ public class ResourceBoxRecoveryItem
             }
         }
 
-        /// <summary>
         /// v3.7 新增：按 GUID 精确恢复资产型 null 项（资源箱里变灰的场景文件/预制体/材质等）。
         /// GUID 才是资产身份的唯一依据，按名字恢复只会命中同名的别的对象。
-        /// </summary>
         private static bool TryReloadAssetForNullSlot(ResourceBoxRecoveryItem raw, out Object asset)
         {
             asset = null;
@@ -6071,10 +6069,8 @@ public class ResourceBoxRecoveryItem
             return true;
         }
 
-        /// <summary>
         /// v3.7 新增：把"以列表下标为键"的元数据表中所有 >= index 的键后移一位（插入用）。
         /// 涉及 _nullObjectDisplayNames / _nullObjectRawItems / _resourceBoxInstanceIDs。
-        /// </summary>
         private void ShiftIndexedMetadataUp(int index)
         {
             var tempNames = new Dictionary<int, string>();
@@ -6102,9 +6098,7 @@ public class ResourceBoxRecoveryItem
             foreach (var kvp in tempIDs) _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
         }
 
-        /// <summary>
         /// v3.7 新增：把"以列表下标为键"的元数据表中所有 > index 的键前移一位（删除用）。
-        /// </summary>
         private void ShiftIndexedMetadataDown(int index)
         {
             var tempNames = new Dictionary<int, string>();
@@ -6135,10 +6129,8 @@ public class ResourceBoxRecoveryItem
             foreach (var kvp in tempIDs) _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
         }
 
-        /// <summary>
         /// v3.7 新增：统一的槽位删除（列表 + 所有以索引为键的元数据表），
         /// 保证任何删除都不会让索引表与列表错位。
-        /// </summary>
         private void RemoveResourceBoxSlotAt(int index)
         {
             if (index < 0 || index >= _resourceBox.Count) return;
@@ -6153,12 +6145,10 @@ public class ResourceBoxRecoveryItem
             ShiftIndexedMetadataDown(index);
         }
 
-        /// <summary>
         /// v3.7 新增：清理"与有效对象同名同类型"的灰色占位项。
         /// 灰色占位是"曾经没解析出来"的历史残留；当列表里已经存在同名同类型的有效对象时，
         /// 它就是纯冗余（也就是用户看到的"重名的灰色成员"），直接移除。
         /// 返回 true 表示确实移除过灰色占位。
-        /// </summary>
         private bool RemoveDuplicateNullPlaceholders()
         {
             bool changed = false;

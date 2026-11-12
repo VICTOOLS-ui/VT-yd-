@@ -373,7 +373,7 @@ Editor 里凡是"**先扫描 / 生成处理清单 → 让用户确认 → 再真
 | 类型 / 方法 | 签名 | 用途 |
 |---|---|---|
 | `VicToolsListConfirmWindow` | `public class ... : EditorWindow` | 通用处理列表确认窗口（非模态） |
-| `Show` | `static VicToolsListConfirmWindow Show(string title, string summary, IReadOnlyList<Item> items, Action onConfirm, string confirmButtonText = "确定", Action onCancel = null, Func<Object, bool> onAddSingle = null, Func<DynamicState> dynamicStateProvider = null)` | 打开窗口并注册确认 / 取消 / 单项添加回调 |
+| `Show` | `static VicToolsListConfirmWindow Show(string title, string summary, IReadOnlyList<Item> items, Action onConfirm, string confirmButtonText = "确定", Action onCancel = null, Func<Object, bool> onAddSingle = null, Func<DynamicState> dynamicStateProvider = null, Func<bool> submitGuard = null)` | 打开窗口并注册确认 / 取消 / 单项添加 / 批量提交二次确认回调 |
 | `Item` | `public class Item { string Text; Object Target; }` | 清单条目：显示文本 + 可选定位目标 |
 | `DynamicState` | `public struct DynamicState { string Summary; string ConfirmButtonText; bool ConfirmDisabled; }` | **动态状态快照**（v1.3 新增）：由 `dynamicStateProvider` 每次绘制时求值，用于让概要与【确定】按钮上的数量随单项添加实时递减 |
 
@@ -390,7 +390,8 @@ public static VicToolsListConfirmWindow Show(
     string confirmButtonText = "确定",
     Action onCancel = null,
     Func<Object, bool> onAddSingle = null,
-    Func<DynamicState> dynamicStateProvider = null)
+    Func<DynamicState> dynamicStateProvider = null,
+    Func<bool> submitGuard = null)
 ```
 
 #### 参数
@@ -405,6 +406,7 @@ public static VicToolsListConfirmWindow Show(
 | `onCancel` | `Action` | 点击【取消】/直接关窗时执行（可选） |
 | `onAddSingle` | `Func<Object, bool>` | **单项添加回调**（可选，v1.2 新增）。传入后清单每行在【定位】右侧多出【添加】按钮，点击即把该行 `Item.Target` 单独加入目标集合。返回 `true` = 成功（该行按钮置灰）。传 `null`（默认）= 不显示【添加】按钮。详见 [§4.5](#45-单项添加--添加按钮) |
 | `dynamicStateProvider` | `Func<DynamicState>` | **动态状态提供者**（可选，v1.3 新增）。窗口**每次绘制**都会重新调用它，用返回值刷新【概要文字】与【确定按钮文字】，从而让"确定添加（N）"这类数量在单项添加后实时递减。传 `null`（默认）= 使用上面传入的静态 `summary` / `confirmButtonText`。详见 [§4.5.1](#451-数量递减--动态状态v13) |
+| `submitGuard` | `Func<bool>` | **批量提交二次确认门**（可选，v1.4 新增）。点击【确定】时先调用它：返回 `true` 才关闭窗口并执行 `onConfirm`；返回 `false` 则**保留窗口、不做任何提交**（用于待处理数量过大时先弹确认框）。传 `null`（默认）= 直接提交。详见 [§4.5.2](#452-批量二次确认--提交门v14) |
 
 #### 返回值
 
@@ -419,6 +421,7 @@ public static VicToolsListConfirmWindow Show(
 5. **定位按钮**：仅当 `Item.Target != null` 时显示，点击执行 `EditorGUIUtility.PingObject(Target)`
 6. **添加按钮**（v1.2）：仅当 `onAddSingle != null` 且 `Item.Target != null` 时显示，点击执行 `onAddSingle(Target)`（详见 [§4.5](#45-单项添加--添加按钮)）
 7. **动态状态**（v1.3）：`dynamicStateProvider != null` 时，概要与【确定】按钮文字改为每次绘制重新求值；`DynamicState.ConfirmDisabled = true` 时【确定】按钮置灰（详见 [§4.5.1](#451-数量递减--动态状态v13)）
+8. **提交二次确认门**（v1.4）：`submitGuard != null` 时，点击【确定】先执行它；返回 `false` 时窗口保持打开、`onConfirm` 不执行（详见 [§4.5.2](#452-批量二次确认--提交门v14)）
 
 ### 4.4 Item — 清单条目
 
@@ -638,6 +641,57 @@ VicToolsListConfirmWindow.Show(
 - 批量写入时业务侧仍有**二次去重**（`_resourceBox.Contains(...)`），因此已单独添加的对象不会被重复入箱
 - 主光窗口的【确定】按钮**始终可用**（`ConfirmDisabled = false`）：主光已在资源箱时点击仍会定位并选中它
 
+### 4.5.2 批量二次确认 — 提交门（v1.4）
+
+> 需求背景：待处理数量很大时（例如往资源箱批量加入上百项资源），用户点【确定添加（N）】容易误触，且无法在弹窗中核对数量。
+
+#### 解决方案：提交门 `submitGuard`
+
+`Show()` 增加末位可选参数 `Func<bool> submitGuard`，窗口在【确定】按钮处理里**先执行它**：
+
+```csharp
+if (GUILayout.Button(curConfirmText, GUILayout.Width(140), GUILayout.Height(24)))
+{
+    // 二次确认门(可选):返回 false 时保留窗口,不关闭、不提交
+    var guard = _submitGuard;
+    if (guard != null && !guard.Invoke()) return;
+
+    // 先取出局部引用再 Close():Close 会触发 OnDestroy 清空字段
+    var confirm = _onConfirm;
+    Close();
+    confirm?.Invoke();
+}
+```
+
+| 情况 | 行为 |
+|---|---|
+| `submitGuard == null` | 直接关闭窗口并执行 `onConfirm`（与 v1.3 行为一致） |
+| `submitGuard()` 返回 `true` | 关闭窗口并执行 `onConfirm` |
+| `submitGuard()` 返回 `false` | **窗口保留**、`onConfirm` 不执行，用户可继续逐项添加或再次点击 |
+
+#### 调用侧示例（数量超阈值时弹确认框）
+
+```csharp
+// 批量加入资源箱前的一次性确认：待添加数量超过阈值时弹确认框
+private static bool ShouldConfirmBatchAdd(ResourceCategoryStat stat, int pendingCount)
+{
+    if (pendingCount <= ResourceBoxBatchConfirmThreshold) return true;
+
+    bool confirmed = EditorUtility.DisplayDialog(
+        "确认批量添加到资源箱",
+        $"即将向资源箱添加 {pendingCount} 项资源（已超过 {ResourceBoxBatchConfirmThreshold} 项）。\n" +
+        "资源箱是工具的对象工作清单，不会改变打包内容，请确认数量无误。",
+        "确定添加", "取消");
+    return confirmed;
+}
+
+// 传入窗口
+VicToolsListConfirmWindow.Show(
+    /* ... */,
+    () => new VicToolsListConfirmWindow.DynamicState { /* ... */ },
+    () => ShouldConfirmBatchAdd(stat, pendingAssets.Count));   // ← 提交门
+```
+
 ### 4.6 窗口行为与生命周期
 
 ```
@@ -648,17 +702,18 @@ Show(...)  ──► 关闭旧窗口 → 创建新窗口 → ShowUtility()（非
       │
       │   ← 此刻调用方函数已结束，编辑器恢复交互（可切 Console / Project）
       │
-      ├─ 用户点【确定】 → 取出 onConfirm 局部引用 → Close() → 执行 onConfirm()
+      ├─ 用户点【确定】 → submitGuard? → 通过则取出 onConfirm 局部引用 → Close() → 执行 onConfirm()
+      │                    └─ 拒绝则窗口保留，不提交
       │
       └─ 用户点【取消】或直接关窗 → 取出 onCancel 局部引用 → Close() → 执行 onCancel()
 ```
 
 | 事件 | 行为 |
 |---|---|
-| 确认按钮 | 先把 `onConfirm` 存入局部变量 → `Close()` → 再执行回调（**顺序很重要**：`Close()` 会触发 `OnDestroy` 清空字段）；`DynamicState.ConfirmDisabled = true` 时按钮置灰、不可点击 |
+| 确认按钮 | 先执行 `submitGuard`（可选，v1.4）→ 通过后把 `onConfirm` 存入局部变量 → `Close()` → 再执行回调（**顺序很重要**：`Close()` 会触发 `OnDestroy` 清空字段）；`DynamicState.ConfirmDisabled = true` 时按钮置灰、不可点击 |
 | 取消按钮 / 关窗 | 同上，执行 `onCancel`（可为 null） |
 | 单项添加 | 执行 `onAddSingle(Target)` → 成功则记录到 `_addedTargetIds` 置灰该行 → `ShowNotification` 提示 → `Repaint()` 让动态数量立即刷新（**不触发** `onConfirm`） |
-| `OnDestroy` | 清空 `_onConfirm` / `_onCancel` / `_onAddSingle` / `_dynamicStateProvider`，重置 `_items`；**不做任何业务处理** |
+| `OnDestroy` | 清空 `_onConfirm` / `_onCancel` / `_onAddSingle` / `_dynamicStateProvider` / `_submitGuard`，重置 `_items`；**不做任何业务处理** |
 | 重复调用 `Show` | 旧窗口的 `onCancel` 会被触发（因为旧窗口被 `Close()`），新窗口接管 |
 
 > ⚠️ 注意：重复点击功能按钮时，上一次的窗口会被关闭并触发其 `onCancel` 回调。若 `onCancel` 里有"用户已取消"之类的日志，注意区分场景。
@@ -946,6 +1001,7 @@ VicToolsListConfirmWindow.Show(
 
 | 日期 | 版本 | 变更 | 作者 |
 |---|---|---|---|
+| 2026-11-11 | 1.4 | `VicToolsListConfirmWindow` 新增**批量提交二次确认门**：`Show()` 增加 `submitGuard`（`Func<bool>`）参数，点击【确定】时先执行它，返回 `false` 则保留窗口、不执行 `onConfirm`；新增 [§4.5.2 批量二次确认 — 提交门](#452-批量二次确认--提交门v14)；`ScenePerformanceAnalyzer` 接入，待添加超过 30 项时弹数量确认框 | — |
 | 2026-10-29 | 1.3 | `VicToolsListConfirmWindow` 新增**动态状态**能力：`Show()` 增加 `dynamicStateProvider`（`Func<DynamicState>`）参数与嵌套结构 `DynamicState`（`Summary` / `ConfirmButtonText` / `ConfirmDisabled`），窗口每次绘制重新求值，**单项添加后【确定添加（N）】与概要中的数量实时递减**、数量归零时【确定】按钮置灰；新增 [§4.5.1 数量递减 — 动态状态](#451-数量递减--动态状态v13)；`ScenesTools` 四个确认窗口（项目场景 / 主光 / 摄像机 / 渲染管线配置）接入，新增 `AddSingleAndRemove<T>()` 与 `Build*Summary()` | — |
 | 2026-10-29 | 1.2 | `VicToolsListConfirmWindow` 新增**单项添加**能力：`Show()` 增加 `onAddSingle`（`Func<Object, bool>`）参数，传入后清单每行【定位】右侧显示【添加】按钮，可不等批量【确定】就把单个对象单独加入资源箱；新增 [§4.5 单项添加](#45-单项添加--添加按钮)；`ScenesTools` 配套新增公开 API `AddObjectToResourceBox()` | — |
 | 2026-10-26 | 1.1 | 新增成员：`VicToolsListConfirmWindow`（通用处理列表确认窗口，非模态；`Show` / `Item`）；补充 [§4](#4-victoolslistconfirmwindow--通用处理列表确认窗口) 使用说明与资源箱批量添加场景的完整示例 | — |
