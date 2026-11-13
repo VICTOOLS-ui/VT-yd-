@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 
 namespace VicTools
 {
@@ -1711,5 +1712,88 @@ namespace VicTools
             
             return bounds;
         }
+
+        #region 寻路网格（Navigation / NavMesh）显示切换
+
+        // Unity 2022.2+ 中寻路网格的可视化由 Scene 视图的 "AI Navigation" Overlay 绘制，
+        // 其 "Show NavMesh" 开关对应 UnityEditor.AI.NavMeshVisualizationSettings.showNavMesh（internal 成员），
+        // 因此需要通过反射调用；该类型位于 UnityEditor.CoreModule。
+        private const string NavMeshVisualizationSettingsTypeName = "UnityEditor.AI.NavMeshVisualizationSettings";
+
+        /// 切换当前场景中寻路网格（Navigation / NavMesh）的显示与隐藏
+        /// 公共函数调用方法：SceneTools.ToggleNavMesh();
+        public static void ToggleNavMesh()
+        {
+            SetNavMeshVisible(!IsNavMeshVisible());
+        }
+
+        /// 获取当前寻路网格（Navigation）可视化的显示状态
+        /// <returns>true：显示中；false：隐藏中或当前版本不支持</returns>
+        public static bool IsNavMeshVisible()
+        {
+            PropertyInfo prop = GetNavMeshShowProperty();
+            if (prop == null) return false;
+            try
+            {
+                return (bool)prop.GetValue(null);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[VicTools] 读取寻路网格显示状态失败：{e.Message}");
+                return false;
+            }
+        }
+
+        /// 设置当前场景寻路网格（Navigation / NavMesh）的显示状态
+        /// <param name="visible">true：显示；false：隐藏</param>
+        public static void SetNavMeshVisible(bool visible)
+        {
+            PropertyInfo prop = GetNavMeshShowProperty();
+            if (prop == null)
+            {
+                EditorUtility.DisplayDialog("提示",
+                    "当前 Unity 版本不支持通过脚本切换寻路网格显示，请手动在 Scene 视图的 AI Navigation Overlay 中操作。",
+                    "确定");
+                return;
+            }
+
+            try
+            {
+                prop.SetValue(null, visible);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[VicTools] 设置寻路网格显示状态失败：{e.Message}");
+                return;
+            }
+
+            // 刷新场景视图，使显示状态立即生效
+            SceneView.RepaintAll();
+            Debug.Log($"[VicTools] 寻路网格已{(visible ? "显示" : "隐藏")}");
+        }
+
+        /// 获取内部属性 UnityEditor.AI.NavMeshVisualizationSettings.showNavMesh（internal，需反射）
+        private static PropertyInfo GetNavMeshShowProperty()
+        {
+            System.Type settingsType = GetNavMeshVisualizationSettingsType();
+            if (settingsType == null) return null;
+            return settingsType.GetProperty("showNavMesh",
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        }
+
+        /// 获取 UnityEditor.AI.NavMeshVisualizationSettings 类型（UnityEditor 内部类型）
+        private static System.Type GetNavMeshVisualizationSettingsType()
+        {
+            // Unity 2022.2+ 中该类型位于 UnityEditor.CoreModule
+            System.Type type = typeof(EditorWindow).Assembly.GetType(NavMeshVisualizationSettingsTypeName);
+            if (type != null) return type;
+
+            // 兼容其它 Unity 版本 / 不同的程序集拆分方式
+            return System.AppDomain.CurrentDomain.GetAssemblies()
+                .Select(assembly => assembly.GetType(NavMeshVisualizationSettingsTypeName))
+                .FirstOrDefault(t => t != null);
+        }
+
+        #endregion
     }
 }

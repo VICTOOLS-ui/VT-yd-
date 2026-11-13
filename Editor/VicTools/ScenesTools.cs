@@ -1,4 +1,5 @@
 ﻿// 【场景工具 v3.7】修复资源箱里的对象加载后变灰、出现同名重复成员、保存后类型/名称/GUID 串位。
+// 【场景工具 v3.8】底部添加（显示、隐藏导航网格）按钮。
 
 using System;
 using UnityEngine;
@@ -130,6 +131,7 @@ public class ResourceBoxRecoveryItem
         private Texture2D _resetPositionIcon; // lightDir.png图标
         private Texture2D _resetRotationIcon; // lightDir.png图标
         private Texture2D _resetScaleIcon; // lightDir.png图标
+        private Texture2D _icon_NavShow; // lightDir.png图标
         private Texture2D _levelIn; // 层级设置图标
         private Texture2D _levelOut; // 层级设置图标
         private Texture2D _selectLayer; // 层级设置图标
@@ -161,7 +163,7 @@ public class ResourceBoxRecoveryItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v3.7]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v3.8]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -218,6 +220,7 @@ public class ResourceBoxRecoveryItem
             string resetPositionicon = "Packages/com.youdoo.victools/Editor/Icons~/resetPosition.png";
             string resetRotationicon = "Packages/com.youdoo.victools/Editor/Icons~/resetRotation.png";
             string resetScaleicon = "Packages/com.youdoo.victools/Editor/Icons~/resetScale.png";
+            string icon_NavShow = "Packages/com.youdoo.victools/Editor/Icons~/icon_NavShow.png";
             string levelIn = "Packages/com.youdoo.victools/Editor/Icons~/level-In.png";
             string levelOut = "Packages/com.youdoo.victools/Editor/Icons~/level-Out.png";
             string selectLayer = "Packages/com.youdoo.victools/Editor/Icons~/selectLayer.png";
@@ -246,6 +249,8 @@ public class ResourceBoxRecoveryItem
             if (_resetRotationIcon != null) _ownedPngIcons.Add(_resetRotationIcon);
             _resetScaleIcon = VicToolsIconLoader.LoadPngIcon(resetScaleicon);
             if (_resetScaleIcon != null) _ownedPngIcons.Add(_resetScaleIcon);
+            _icon_NavShow = VicToolsIconLoader.LoadPngIcon(icon_NavShow);
+            if (_icon_NavShow != null) _ownedPngIcons.Add(_icon_NavShow);
             _levelIn = VicToolsIconLoader.LoadPngIcon(levelIn);
             if (_levelIn != null) _ownedPngIcons.Add(_levelIn);
             _levelOut = VicToolsIconLoader.LoadPngIcon(levelOut);
@@ -1802,6 +1807,10 @@ public class ResourceBoxRecoveryItem
                     }
                 }
             }
+            if (GUILayout.Button(new GUIContent(_icon_NavShow, "显示、隐藏导航网格"), new GUIStyle(GUIStyle.none) { alignment = TextAnchor.MiddleCenter }, GUILayout.Height(30), GUILayout.Width(38)))
+                {
+                    SceneTools.ToggleNavMesh();
+                }
 
             GUI.backgroundColor = new Color(0.66f, 0.66f, 0.66f);
             // 仅当选中对象中存在丢失Mesh时显示找回按钮
