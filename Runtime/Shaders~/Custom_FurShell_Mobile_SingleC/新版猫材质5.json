@@ -1,0 +1,42 @@
+{
+  "_UseDistanceAtten": 0,
+  "_UseVerShadow": 1,
+  "_UseSelfShadow": 0,
+  "_BaseColor": [1, 1, 1, 1],
+  "_UseAlpha": 1,
+  "_ShellAmount": 10,
+  "_FurLength": 0.002,
+  "_AlphaOffset": 0.155,
+  "_AlphaCutout": 0.456,
+  "_FurScale": 2.2,
+  "_Occlusion": 0.192,
+  "_LightStepSoftness": 1,
+  "_ShadowBrightness": 0.4,
+  "_Brightness": 0.637,
+  "_UseTouch": 0,
+  "_UseWind": 0,
+  "_BaseMove": [0.9, -0.88, 0, 5],
+  "_WindFreq": [0.5, 0.5, 0.5, 1],
+  "_WindMove": [0.67, 0.3, 0.2, 2],
+  "_FaceViewProdThresh": 0.0001,
+  "_TouchPosition": [0.2917, -1000, 0, 2.7],
+  "_TouchRadius": 1,
+  "_MaxDepression": 0.3,
+  "_UseWindCone": 0,
+  "_WindConePosition": [0, 0, 0, 1],
+  "_WindConeDirection": [0, 1, 0, 0],
+  "_WindConeAngle": 30,
+  "_WindConeRange": 5,
+  "_WindConeFrequencyBoost": 2,
+  "_RimLightIntensity": 1.3
+  "_RimLightEdgeStart": 0.534
+  "_RimLightEdgeEnd": 0.961
+  "_RimShadowStrength": 0.285
+  "_RimBottomStrength": 0.111
+  "_RimLightColor": [1, 0.9373905, 0.4103774, 1]
+  "_NoiseBendStrength": 55
+,
+  "_BaseMap": {"path": "Assets/GameMain/Texture/CatPic/260924.tga", "tiling": [1, 1], "offset": [0, 0]},
+  "_FurMap": {"path": "Packages/com.youdoo.victools/Runtime/Testures/FurNoise.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_NoiseMap": {"path": "Packages/com.youdoo.victools/Runtime/Testures/Wind.png", "tiling": [2, 2], "offset": [-0.02, 0]}
+}
