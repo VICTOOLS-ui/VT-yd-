@@ -258,7 +258,7 @@ public class FurShell_MobileGUI : ShaderGUI
         string json = System.IO.File.ReadAllText(filePath);
         bool hasTexData = json.Contains("\"path\":");
         bool loadTex = hasTexData && EditorUtility.DisplayDialog("读取纹理",
-            "存档中包含纹理引用，是否同时读取？\n（毛发贴图、弯曲Noise贴图为毛发核心贴图，无论选择哪一项都会读取）",
+            "存档中包含纹理引用，是否同时读取？\n（选择“是”将读取全部纹理，含基础贴图；毛发贴图、弯曲Noise贴图无论选择哪一项都会读取）",
             "是", "否，仅参数");
 
         Undo.RecordObject(material, "Load Fur Preset");
@@ -288,9 +288,12 @@ public class FurShell_MobileGUI : ShaderGUI
                 bool alwaysLoadTex = AlwaysLoadTextureNames.Contains(key);
                 if (loadTex || alwaysLoadTex)
                 {
-                    // 主纹理已有时不替换
+                    // 基础贴图（_BaseMap / _MainTex）：
+                    // 选择“是”时按存档读取并替换；
+                    // 选择“否，仅参数”时保留材质上已有的引用，不做替换
                     bool isMainTex = (key == "_BaseMap" || key == "_MainTex");
-                    if (!(isMainTex && material.GetTexture(key) != null))
+                    bool keepExistingMainTex = isMainTex && !loadTex && material.GetTexture(key) != null;
+                    if (!keepExistingMainTex)
                     {
                         string texPath = ExtractJsonString(texJson, "path");
                         if (!string.IsNullOrEmpty(texPath))
