@@ -175,7 +175,7 @@ namespace VicTools
             }
 
             Add("v3.0.2",
-                "",
+                "FurShellGUI 1.8 读档仅参数时包含（_FurMap 毛发贴图、_NoiseMap 弯曲Noise贴图）",
                 "【性能分析 v2.0】场景基本信息分栏中添加重要资源占比统计，并且可以快速查看定位资源添加资源箱。"
             );
 

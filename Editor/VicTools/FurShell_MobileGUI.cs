@@ -1,7 +1,8 @@
 // FurShell_MobileGUI 1.1 - 毛发shader的GUI控制脚本
 // 1.1 添加Tiling/Offset控制，优化按钮风格
 // 2.0 添加预设列表菜单
-// FurShell 1.7 修复“使用圆锥风力”选项开关控制无效问题
+// FurShellGUI 1.7 修复“使用圆锥风力”选项开关控制无效问题
+// FurShellGUI 1.8 读档仅参数时包含（_FurMap 毛发贴图、_NoiseMap 弯曲Noise贴图）
 
 using UnityEngine;
 using UnityEditor;
@@ -58,6 +59,12 @@ public class FurShell_MobileGUI : ShaderGUI
 
     // 存档路径
     private const string SAVE_FOLDER = "Library/VicTools/FurShell/";
+
+    // 毛发核心贴图：读档 / 读取预设时始终读取，不受“否，仅参数”选项影响
+    // _FurMap  = 毛发贴图
+    // _NoiseMap = 弯曲Noise贴图
+    private static readonly System.Collections.Generic.HashSet<string> AlwaysLoadTextureNames =
+        new System.Collections.Generic.HashSet<string> { "_FurMap", "_NoiseMap" };
 
     public override void OnGUI(MaterialEditor materialEditor, MaterialProperty[] properties)
     {
@@ -251,7 +258,8 @@ public class FurShell_MobileGUI : ShaderGUI
         string json = System.IO.File.ReadAllText(filePath);
         bool hasTexData = json.Contains("\"path\":");
         bool loadTex = hasTexData && EditorUtility.DisplayDialog("读取纹理",
-            "存档中包含纹理引用，是否同时读取？", "是", "否，仅参数");
+            "存档中包含纹理引用，是否同时读取？\n（毛发贴图、弯曲Noise贴图为毛发核心贴图，无论选择哪一项都会读取）",
+            "是", "否，仅参数");
 
         Undo.RecordObject(material, "Load Fur Preset");
 
@@ -275,7 +283,10 @@ public class FurShell_MobileGUI : ShaderGUI
 
                 if (!material.HasProperty(key)) continue;
 
-                if (loadTex)
+                // 毛发贴图 / 弯曲Noise贴图属于毛发核心贴图，始终读取；
+                // 其余纹理按用户选择（“是”=全部读取，“否，仅参数”=跳过）决定
+                bool alwaysLoadTex = AlwaysLoadTextureNames.Contains(key);
+                if (loadTex || alwaysLoadTex)
                 {
                     // 主纹理已有时不替换
                     bool isMainTex = (key == "_BaseMap" || key == "_MainTex");
