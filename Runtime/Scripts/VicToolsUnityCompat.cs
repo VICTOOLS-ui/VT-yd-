@@ -62,13 +62,10 @@ using UnityEngine;
 
 namespace Vic.Runtime
 {
-    /// <summary>
     /// VicTools 跨 Unity 版本 API 兼容层。
     /// 目前仅封装 GetInstanceID / GetEntityId 的版本差异，后续 Unity 版本迁移可在此集中扩展。
-    /// </summary>
     public static class VicToolsUnityCompat
     {
-        /// <summary>
         /// 获取 <paramref name="obj"/> 的稳定唯一数值 ID（恒为非负，<strong>不可反查</strong>）。
         ///
         /// 仅用于「同一进程内唯一即可」的用途：Dictionary key、去重集合、Mesh 名 / 控件名后缀。
@@ -79,7 +76,6 @@ namespace Vic.Runtime
         /// 会让返回值为负 —— 而调用点会把它直接拼进 Mesh 名 / 控件名，
         /// 负号与超长数字都可能触发 Unity 的 64 字符名截断。
         /// 也正因抹了符号位，本方法结果<strong>不能</strong>喂给 IdToObject 反查。
-        /// </summary>
         /// <param name="obj">目标对象，允许为 null（此时返回 0）。</param>
         public static int GetStableId(Object obj)
         {
@@ -92,17 +88,14 @@ namespace Vic.Runtime
 #endif
         }
 
-        /// <summary>
         /// <see cref="GetStableId"/> 的字符串版本，用于拼接对象名 / 控件名。
         /// null 返回 <c>"0"</c>（与非 null 的 "0" 撞名概率可忽略，
         /// 且所有调用点在使用前都已判空，不构成实际问题）。
-        /// </summary>
         public static string GetStableIdString(Object obj)
         {
             return GetStableId(obj).ToString();
         }
 
-        /// <summary>
         /// 获取<strong>可反查</strong>的原始 ID —— 存入后必须能用它换回同一个对象
         /// （配套 <c>VicToolsEditorCompat.IdToObject</c>）。
         ///
@@ -140,7 +133,6 @@ namespace Vic.Runtime
         ///      及其字符串序列化格式都要一并调整。
         ///   B. 改用 GlobalObjectId（字符串、Unity 6 未废弃、跨会话稳定），
         ///      ScenesTools 已有 GLOBALID: 主路径，INSTANCE: 仅作旧格式兜底。
-        /// </summary>
         public static int GetReversibleId(Object obj)
         {
             if (obj == null) return 0;

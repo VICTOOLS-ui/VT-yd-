@@ -42,6 +42,9 @@
 //                 多走 1L 出现漂移）改为对称 `[-halfSpan, +halfSpan]`（区间宽度 = N×L = totalLength
 //                 = 每段循环一圈步长，恰好对齐）。消除 v2.2 删除 swapThreshold 后遗留的"每循环 1L 漂移"，
 //                 也消除 v2.4 在大 L 下与 origin 偏移叠加的越界跳变 bug。
+// RoadScroll v2.6 输入系统兼容：ApplyJoystickInput 改走 VicInputCompat.GetVerticalAxis()，
+//               避免项目 Active Input Handling = "Input System Package (New)" 时
+//               Input.GetAxis("Vertical") 抛 InvalidOperationException（每帧调用 → 持续报错）。
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -233,7 +236,10 @@ namespace Vic.Runtime
 
         private void ApplyJoystickInput()
         {
-            scrollSpeed += Input.GetAxis("Vertical") * kJoystickAccel;
+            // 走 VicInputCompat：项目 Active Input Handling = "Input System Package (New)" 时，
+            // 直接调用 Input.GetAxis 会抛 InvalidOperationException（且本方法每帧调用 → 持续报错）。
+            // 旧输入可用时行为不变；否则降级为新输入系统的手柄左摇杆 / 键盘 W-S。
+            scrollSpeed += VicInputCompat.GetVerticalAxis() * kJoystickAccel;
         }
 
         private void ScrollSegments()

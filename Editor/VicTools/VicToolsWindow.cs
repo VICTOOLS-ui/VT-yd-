@@ -2921,6 +2921,9 @@ namespace VicTools
 
         private void CreateEmissionFlicker()
         {
+            // 支持添加 EmissionFlicker 的 Shader（均包含 _EmissionScale 属性）
+            string[] supportShaders = { "Custom/PBR_Mobile", "Custom/PBR_Mobile_NEW" };
+
             GameObject[] selectedObjects = Selection.gameObjects;
             int count = 0;
 
@@ -2938,7 +2941,7 @@ namespace VicTools
                     Debug.LogWarning($"[{obj.name}] 没有分配材质。");
                     break;
                 }
-                if (renderer.sharedMaterial.shader.name == "Custom/PBR_Mobile")
+                if (supportShaders.Contains(renderer.sharedMaterial.shader.name))
                 {
                     if (obj.GetComponent<EmissionFlicker>() == null)
                     {

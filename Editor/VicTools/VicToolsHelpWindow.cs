@@ -175,6 +175,7 @@ namespace VicTools
             }
 
             Add("v3.0.2",
+                "[Tools] EmissionFlicker v1.4 - 修复自发光参数0时无法闪烁的问题，支持PBR_Mobile_NEW.shader，添加（基准强度）参数。",
                 "【场景工具 v3.8】底部添加（显示、隐藏导航网格）按钮。",
                 "FurShellGUI 1.8 读档仅参数时包含（_FurMap 毛发贴图、_NoiseMap 弯曲Noise贴图）",
                 "【性能分析 v2.0】场景基本信息分栏中添加重要资源占比统计，并且可以快速查看定位资源添加资源箱。"

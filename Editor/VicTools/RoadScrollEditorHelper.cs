@@ -28,6 +28,12 @@
 //   - 现增加"向上遍历父链匹配"：精确匹配失败后从 segment.parent 逐级向上查找任一 rs.roadSegments[j]，
 //     命中即跳回所属 RoadScroll
 //   - roadSegment 经常带子物体（mesh/装饰/Collider 子级），用户选中子级时 ESC 仍能跳回控制器
+// RoadScrollEditorHelper v2.7 修复纯新输入系统（Active Input Handling = "Input System Package (New)"）下
+//   ESC 快捷键每帧抛 InvalidOperationException 的问题：
+//   - 原因：EditorApplication.update 每帧调用 Input.GetKeyDown(KeyCode.Escape)，
+//     新输入系统模式下 UnityEngine.Input 全部不可用，抛
+//     "You are trying to read Input using the UnityEngine.Input class..." 且持续刷屏
+//   - 修复：改走 VicInputCompat.GetKeyDown()，旧输入可用则用旧输入，否则降级到新输入系统
 
 using System;
 using System.Collections.Generic;
@@ -361,8 +367,11 @@ namespace VicTools
     /// （Selection 由我们重新置为目标父对象）。</para>
     /// <para><b>注册方式</b>：<see cref="InitializeOnLoadAttribute"/> 在 Editor 启动/域重载
     /// 时自动注册两条触发路径（<see cref="SceneView.duringSceneGui"/> +
-    /// <see cref="EditorApplication.update"/>+<see cref="Input.GetKeyDown(KeyCode.Escape)"/>），
+    /// <see cref="EditorApplication.update"/> + <c>VicInputCompat.GetKeyDown(KeyCode.Escape)</c>），
     /// 无需用户在 Inspector 启用任何开关。</para>
+    /// <para><b>输入系统兼容</b>：ESC 读取走 <see cref="VicInputCompat"/>，项目 Active Input Handling
+    /// 为 "Input System Package (New)" 时自动降级到新输入系统，不会抛
+    /// <c>InvalidOperationException</c>。</para>
     [InitializeOnLoad]
     internal static class RoadScrollSegmentSelectionHelper
     {
@@ -397,9 +406,13 @@ namespace VicTools
 
         // 路径 2：Game / Hierarchy 等窗口焦点 + ESC（Input 系统在 SceneView 之外也能响应）
         // SceneView.duringSceneGui 仅在 Scene 窗口绘制时触发，覆盖不到 Game 视图焦点
+        //
+        // v2.7 兼容新旧输入系统：项目 Active Input Handling = "Input System Package (New)" 时，
+        // 直接调用 Input.GetKeyDown 会抛 InvalidOperationException，且本回调每帧执行 → 持续刷屏报错。
+        // 改由 VicInputCompat 统一处理：旧输入可用则用旧输入，否则降级到新输入系统。
         private static void OnEditorUpdate()
         {
-            if (!Input.GetKeyDown(KeyCode.Escape)) return;
+            if (!VicInputCompat.GetKeyDown(KeyCode.Escape)) return;
             TryJumpToOwner(useEvent: false);
         }
 

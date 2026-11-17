@@ -90,7 +90,7 @@ Shader "Custom/PBR_Mobile_NEW"
         [Toggle(_USEEMISSIONMAP)] _UseEmissionMap("Use Emission Map", Float) = 0
         [HDR]_EmissionColor ("Emission Color", Color) = (1,1,1,1)
         _EmissionMap ("Emission Map", 2D) = "white" {}
-        _EmissionScale  ("Emission Scale", Range(0, 3)) = 1.0
+        _EmissionScale  ("Emission Scale", Range(0, 5)) = 1.0
         [Toggle(_INVERTEMISMAP)] _InvertEmisMap("Invert Emission Map", Float) = 0   
         
         // [Header(........................................................)]
