@@ -240,7 +240,7 @@ namespace Vic.Editor
         /// </param>
         /// <param name="onAddReferenced">
         /// 引用对象批量添加回调(可选)。传入后,窗口底部显示蓝色【添加引用对象】按钮,
-        /// 点击即把清单中标记为「被当前场景引用」(<see cref="Item.IsReferenced"/>)的资源一次性加入目标集合。
+        /// 点击即把清单中标记为「被当前场景/项目引用」(<see cref="Item.IsReferenced"/>)的资源一次性加入目标集合。
         /// 返回 true 表示添加成功,窗口会置灰该按钮并弹出提示。
         /// </param>
         public static VicToolsListConfirmWindow Show(
@@ -433,7 +433,7 @@ namespace Vic.Editor
                     confirm?.Invoke();
                 }
             }
-            // ── 【添加引用对象】:一键把清单中被当前场景引用的资源加入资源箱(置于最右侧) ──
+            // ── 【添加引用对象】:一键把清单中被当前场景/项目引用的资源加入资源箱(置于最右侧) ──
             if (_onAddReferenced != null)
             {
                 var referencedTargets = CollectReferencedTargets();
@@ -442,7 +442,7 @@ namespace Vic.Editor
                 {
                     if (GUILayout.Button(
                             new GUIContent($"添加引用对象（{referencedTargets.Count}）",
-                                "一键把清单中被当前场景引用（蓝色标记）的资源加入资源箱"),
+                                "一键把清单中被当前场景/项目引用（蓝色标记）的资源加入资源箱"),
                             GUILayout.Width(170), GUILayout.Height(24)))
                     {
                         bool ok = _onAddReferenced(referencedTargets.ToArray());

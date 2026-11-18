@@ -1,5 +1,6 @@
 ﻿// 【场景工具 v3.7】修复资源箱里的对象加载后变灰、出现同名重复成员、保存后类型/名称/GUID 串位。
 // 【场景工具 v3.8】底部添加（显示、隐藏导航网格）按钮。
+// 【场景工具 v3.9】"添加项目中渲染管线配置文件"确认窗口新增蓝色【添加引用对象（N）】按钮：清单中"被项目引用"（ProjectSettings 引用 / 当前生效）的渲染管线配置标为蓝色，可一键只把项目真正在用的渲染管线配置（含其渲染器数据）加入资源箱。
 
 using System;
 using UnityEngine;
@@ -3091,6 +3092,10 @@ public class ResourceBoxRecoveryItem
             return $"#{Mathf.RoundToInt(c.r * 255):X2}{Mathf.RoundToInt(c.g * 255):X2}{Mathf.RoundToInt(c.b * 255):X2}";
         }
 
+        // v3.9 新增：清单中「被项目引用」渲染管线配置的文本颜色（蓝色）
+        // 与性能分析器「被当前场景引用」的蓝色标记保持一致
+        private static readonly Color RenderPipelineReferencedTextColor = new Color(0.35f, 0.65f, 1f);
+
         /// v3.4 新增：一键把【当前项目相关的渲染管线配置文件】放入资源箱
         /// 扫描范围：
         ///   ① 项目设置（ProjectSettings/GraphicsSettings.asset、QualitySettings.asset）中引用的
@@ -3099,11 +3104,17 @@ public class ResourceBoxRecoveryItem
         ///   ③ 项目内全部 RenderPipelineAsset（未被任何设置引用的标记为"未启用"）
         ///   ④ 管线资产引用的渲染器数据（URP m_RendererDataList / HDRP m_RendererData）
         /// 流程：只读扫描 → 公共确认窗口（Vic.Editor.VicToolsListConfirmWindow）列出清单 → 用户确认后才写入资源箱
+        /// v3.9 变更：清单中"被项目引用"的条目（① ② 项，及其管线的渲染器数据）标为蓝色，
+        ///   确认窗口底部出现【添加引用对象（N）】按钮，可一键只把项目真正在用的渲染管线配置收进资源箱
         private void AddAllProjectRenderPipelineAssetsToResourceBox()
         {
             // 资产 → 使用状态标签（同一资产被多处引用时合并标签）
             var tagMap = new Dictionary<Object, string>();
             var candidates = new List<Object>();
+
+            // v3.9：被项目引用（ProjectSettings 引用 / 当前生效）的渲染管线配置集合
+            // 清单中这些条目标为蓝色，并参与确认窗口的【添加引用对象（N）】一键添加
+            var referencedAssets = new HashSet<Object>();
 
             // ---------- ① 项目设置里引用的渲染管线配置 ----------
             foreach (var settingsPath in new[]
@@ -3123,11 +3134,13 @@ public class ResourceBoxRecoveryItem
                     if (asset is UnityEngine.Rendering.RenderPipelineAsset)
                     {
                         AddRenderPipelineCandidate(tagMap, candidates, asset, "项目设置引用");
+                        referencedAssets.Add(asset);
                     }
                     else if (asset.GetType().Name == "RenderPipelineGlobalSettings")
                     {
                         // 渲染管线全局设置（URP/HDRP 的 GlobalSettings 资产），按类型名判断避免版本依赖
                         AddRenderPipelineCandidate(tagMap, candidates, asset, "管线全局设置");
+                        referencedAssets.Add(asset);
                     }
                 }
             }
@@ -3136,7 +3149,11 @@ public class ResourceBoxRecoveryItem
             try
             {
                 var defaultPipeline = UnityEngine.Rendering.GraphicsSettings.defaultRenderPipeline;
-                if (defaultPipeline) AddRenderPipelineCandidate(tagMap, candidates, defaultPipeline, "Graphics默认");
+                if (defaultPipeline)
+                {
+                    AddRenderPipelineCandidate(tagMap, candidates, defaultPipeline, "Graphics默认");
+                    referencedAssets.Add(defaultPipeline);
+                }
             }
             catch (Exception e)
             {
@@ -3146,7 +3163,11 @@ public class ResourceBoxRecoveryItem
             try
             {
                 var currentPipeline = QualitySettings.renderPipeline;
-                if (currentPipeline) AddRenderPipelineCandidate(tagMap, candidates, currentPipeline, "当前质量等级");
+                if (currentPipeline)
+                {
+                    AddRenderPipelineCandidate(tagMap, candidates, currentPipeline, "当前质量等级");
+                    referencedAssets.Add(currentPipeline);
+                }
             }
             catch (Exception e)
             {
@@ -3179,7 +3200,7 @@ public class ResourceBoxRecoveryItem
             foreach (var asset in candidates.ToList()) // 复制一份，避免遍历时修改集合
             {
                 if (!(asset is UnityEngine.Rendering.RenderPipelineAsset)) continue;
-                CollectRendererDataAssets(asset, tagMap, candidates);
+                CollectRendererDataAssets(asset, tagMap, candidates, referencedAssets);
             }
 
             if (candidates.Count == 0)
@@ -3195,6 +3216,7 @@ public class ResourceBoxRecoveryItem
             int rendererDataCount = 0;
             int disabledCount = 0;
             int alreadyInBox = 0;
+            int referencedCount = 0;
 
             foreach (var asset in candidates)
             {
@@ -3213,8 +3235,14 @@ public class ResourceBoxRecoveryItem
                 bool inBox = _resourceBox.Contains(asset);
                 if (inBox) alreadyInBox++;
 
+                // v3.9：被项目引用（ProjectSettings 引用 / 当前生效）的条目标蓝色，
+                // 并作为【添加引用对象（N）】的一键添加目标
+                bool isReferenced = referencedAssets.Contains(asset);
+                if (isReferenced) referencedCount++;
+
                 var line = $"[{tag}] {display}" + (inBox ? "（已在资源箱）" : "");
-                items.Add(new VicToolsListConfirmWindow.Item(line, asset));
+                items.Add(new VicToolsListConfirmWindow.Item(line, asset,
+                    isReferenced ? RenderPipelineReferencedTextColor : (Color?)null, isReferenced));
             }
 
             // 待添加列表:只含"尚未入箱、批量操作会写入"的候选资产
@@ -3227,7 +3255,8 @@ public class ResourceBoxRecoveryItem
             }
 
             var summary = BuildRenderPipelineSummary(
-                candidates.Count, pendingAssets.Count, pipelineAssetCount, rendererDataCount, disabledCount, alreadyInBox);
+                candidates.Count, pendingAssets.Count, pipelineAssetCount, rendererDataCount,
+                disabledCount, alreadyInBox, referencedCount);
 
             int capturedSkipped = alreadyInBox;
 
@@ -3235,6 +3264,7 @@ public class ResourceBoxRecoveryItem
             // onAddSingle：单项添加后从 pendingAssets 移除 → 待添加数量递减
             // dynamicStateProvider：每次绘制重新求值，概要与【确定添加（N）】实时递减
             // 注：批量写入仍传 candidates 全量，内部二次校验会跳过已单独添加的（不会重复入箱）
+            // v3.9：onAddReferenced 非 null → 窗口底部显示蓝色【添加引用对象（N）】按钮
             VicToolsListConfirmWindow.Show(
                 "添加渲染管线配置",
                 summary,
@@ -3246,24 +3276,81 @@ public class ResourceBoxRecoveryItem
                 () => new VicToolsListConfirmWindow.DynamicState
                 {
                     Summary = BuildRenderPipelineSummary(
-                        candidates.Count, pendingAssets.Count, pipelineAssetCount, rendererDataCount, disabledCount, alreadyInBox),
+                        candidates.Count, pendingAssets.Count, pipelineAssetCount, rendererDataCount,
+                        disabledCount, alreadyInBox, referencedCount),
                     ConfirmButtonText = $"确定添加（{pendingAssets.Count}）",
                     ConfirmDisabled = pendingAssets.Count <= 0,
-                });
+                },
+                submitGuard: null,
+                onAddReferenced: objs => AddReferencedRenderPipelineConfigsToResourceBox(objs, pendingAssets));
         }
 
         /// 组装"添加渲染管线配置"确认窗口的概要文字
         /// <remarks>单项添加会移除待添加列表内容,故每次绘制重新调用以保持数量准确。</remarks>
         private static string BuildRenderPipelineSummary(
             int totalCount, int pendingCount, int pipelineAssetCount, int rendererDataCount,
-            int disabledCount, int skippedCount)
+            int disabledCount, int skippedCount, int referencedCount)
         {
             var s = $"渲染管线配置：{totalCount} 个" +
                     $"\n管线资产 {pipelineAssetCount} 个 / 渲染器数据 {rendererDataCount} 个";
+            if (referencedCount > 0) s += $"\n被项目引用（可一键添加）：{referencedCount} 个";
             if (disabledCount > 0) s += $"\n未启用：{disabledCount} 个";
             if (skippedCount > 0) s += $"\n已在资源箱（跳过）：{skippedCount} 个";
             if (pendingCount <= 0) s += "\n全部已在资源箱，无需新增";
             return s;
+        }
+
+        /// v3.9 新增：把"被项目引用"的渲染管线配置一键写入资源箱
+        /// （由公共确认窗口底部蓝色【添加引用对象（N）】按钮回调）
+        /// <remarks>
+        /// 只处理"正在生效 / 被 ProjectSettings 引用"的渲染管线配置（及其渲染器数据）：
+        ///   ① ProjectSettings（GraphicsSettings / QualitySettings）引用的管线资产与管线全局设置；
+        ///   ② 当前生效的 Graphics 默认管线、当前质量等级管线；
+        ///   ③ 上述管线资产引用的渲染器数据（URP m_RendererDataList / HDRP m_RendererData）。
+        /// 用户无需在全量清单里逐项勾选，一键把项目真正在用的渲染管线相关资产收进资源箱。
+        /// </remarks>
+        /// <param name="assets">确认窗口筛选出的引用对象（被标记为 IsReferenced 的条目）。</param>
+        /// <param name="pendingList">本次批量操作的待添加列表；新增成功后从中移除，保持待添加数量同步递减。</param>
+        /// <returns>true = 至少新增 1 个；false = 无可添加 / 全部已在资源箱中。</returns>
+        private bool AddReferencedRenderPipelineConfigsToResourceBox(Object[] assets, List<Object> pendingList)
+        {
+            if (assets == null || assets.Length == 0)
+            {
+                Debug.LogWarning("[ResourceBox] 当前清单中没有引用对象可添加");
+                if (Parent) Parent.ShowNotification(new GUIContent("没有引用对象可添加"));
+                return false;
+            }
+
+            int addedCount = 0;
+            int skippedCount = 0;
+            foreach (var asset in assets)
+            {
+                if (!asset) continue;                       // 资源被删除等异常
+                if (AddObjectToResourceBox(asset))          // 内部已去重（已在资源箱中返回 false）
+                {
+                    addedCount++;
+                    // 从待添加列表移除 → 概要与【确定添加（N）】的数量实时递减
+                    if (pendingList != null) pendingList.Remove(asset);
+                }
+                else
+                {
+                    skippedCount++;
+                }
+            }
+
+            if (addedCount <= 0)
+            {
+                Debug.Log("[ResourceBox] 没有新的引用渲染管线配置被加入资源箱");
+                if (Parent) Parent.ShowNotification(new GUIContent("没有新的引用渲染管线配置被加入资源箱"));
+                return false;
+            }
+
+            var summary = $"已添加 {addedCount} 个被引用的渲染管线配置到资源箱";
+            if (skippedCount > 0) summary += $"（已存在跳过 {skippedCount} 个）";
+            Debug.Log($"[ResourceBox] {summary}");
+            // 完成提示不做模态弹窗：主窗口顶部气泡提示，不阻塞 Console
+            if (Parent) Parent.ShowNotification(new GUIContent(summary));
+            return true;
         }
 
         /// 把确认后的渲染管线配置写入资源箱（由公共确认窗口的【确定添加】按钮回调）
@@ -3318,11 +3405,16 @@ public class ResourceBoxRecoveryItem
         }
 
         /// 读取渲染管线资产引用的渲染器数据资产（URP: m_RendererDataList / HDRP: m_RendererData）
-        private static void CollectRendererDataAssets(Object pipelineAsset, Dictionary<Object, string> tagMap, List<Object> candidates)
+        /// <param name="referencedAssets">被项目引用的资产集合；父管线被引用时，其渲染器数据同样计入引用范围。</param>
+        private static void CollectRendererDataAssets(Object pipelineAsset, Dictionary<Object, string> tagMap,
+            List<Object> candidates, HashSet<Object> referencedAssets)
         {
             try
             {
                 var so = new SerializedObject(pipelineAsset);
+
+                // 父管线本身被项目引用时，其渲染器数据也算"被引用"
+                bool parentReferenced = referencedAssets != null && referencedAssets.Contains(pipelineAsset);
 
                 var listProp = so.FindProperty("m_RendererDataList"); // URP
                 if (listProp != null && listProp.isArray)
@@ -3330,7 +3422,9 @@ public class ResourceBoxRecoveryItem
                     for (int i = 0; i < listProp.arraySize; i++)
                     {
                         var data = listProp.GetArrayElementAtIndex(i).objectReferenceValue;
-                        if (data) AddRenderPipelineCandidate(tagMap, candidates, data, "渲染器数据");
+                        if (!data) continue;
+                        AddRenderPipelineCandidate(tagMap, candidates, data, "渲染器数据");
+                        if (parentReferenced) referencedAssets.Add(data);
                     }
                 }
 
@@ -3338,7 +3432,11 @@ public class ResourceBoxRecoveryItem
                 if (singleProp != null)
                 {
                     var data = singleProp.objectReferenceValue;
-                    if (data) AddRenderPipelineCandidate(tagMap, candidates, data, "渲染器数据");
+                    if (data)
+                    {
+                        AddRenderPipelineCandidate(tagMap, candidates, data, "渲染器数据");
+                        if (parentReferenced) referencedAssets.Add(data);
+                    }
                 }
             }
             catch (Exception e)
