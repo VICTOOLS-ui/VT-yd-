@@ -110,7 +110,7 @@ Shader "Custom/PBR_Mobile_NEW"
         [HideInInspector]_Cutoff("Alpha Cutoff", Range(0.001, 1.0)) = 0.5
         [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
 
-        [Header(8  (Performance Toggles))]
+        // [Header(8  (Performance Toggles))]
         [Space(5)]
         [Toggle(_DISABLEBAKEDSPECULAR)] _DisableBakedSpecular ("Disable Baked Specular (烘焙高光)", Float) = 1
         [Toggle(_DISABLEINDIRECTSPECULAR)] _DisableIndirectSpecular ("Disable Indirect Specular (间接高光近似)", Float) = 1

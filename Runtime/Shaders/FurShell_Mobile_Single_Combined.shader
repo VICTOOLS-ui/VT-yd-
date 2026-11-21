@@ -8,7 +8,8 @@
 //FurShell 1.8 优化边缘光透光，减弱模型中间部分边缘光，添加边缘光相关参数。
 //FurShell 1.9 完善边缘光算法，优化毛发逆光效果表现，优化模型底部边缘光过曝处理。
 //FurShell 2.0 添加(明暗交界线软硬)、(阴影亮度)与(整体亮度)参数。
-//FurShell 2.1 （阴影强度）参数要同时控制自身阴影，使明暗交界与阴影一致。
+//FurShell 2.1 “阴影强度”参数要同时控制自身阴影，使明暗交界与阴影一致。
+//FurShell 2.2 “光影遮蔽”参数优化，削减“光影遮蔽”对底层毛发模型的暗度影响。
 
 Shader "Custom/FurShell_Mobile_SingleC"
 {
@@ -30,7 +31,10 @@ Shader "Custom/FurShell_Mobile_SingleC"
         _AlphaOffset("Alpha Offset", Range(0.0, 1.01)) = 0.06
         _AlphaCutout("Alpha Cutout", Range(0.0, 1.0)) = 0.3
         _FurScale("Fur Density", Range(0.1, 50.0)) = 1.0
-        _Occlusion("Occlusion", Range(0.0, 1.0)) = 0.23
+        // 层间遮蔽（光影遮蔽）：根部暗、梢部亮。
+        //   最底层壳层（layer < 0，贴着模型表面那层）只按一半强度压暗，
+        //   避免根部出现一圈死黑/黑边；其余层保持从根到梢的线性过渡。
+        _Occlusion("Occlusion", Range(0.0, 1.0)) = 0.43
         // 明暗交界线软度（toon shading 阈值化）：对 NdotL 做 smoothstep 阈值化
         //   1.0 = 渐变原版（向后兼容，等价 smoothstep(0,1,x) = x）
         //   0.0 = 硬色阶（等价 smoothstep(0.5,0.5,x) = step(0.5,x)）
@@ -90,7 +94,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
         _TouchRadius("Touch Radius", Float) = 1.0
         _MaxDepression("Max Depression", Range(0.0, 2.0)) = 1.3  // 最大凹陷度
         
-        [Space(20)]
+        // [Space(20)]
         // 圆锥形风力影响参数（模拟吹风机效果）
         [ToggleUI] _UseWindCone ("Use Wind Cone", Float) = 0.0
         _WindConePosition("Wind Cone Position", Vector) = (0, 0, 0, 1)  // xyz: 圆锥中心位置, w: 强度倍增
@@ -898,7 +902,14 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 }
                 
                 // 使用预计算的遮挡因子（考虑层间混合，使用baseColor.a排除最底层无毛发处AO影响）
-                float occlusion = lerp(1.0 - input.alphaFactor * baseColor.a, 1.0, input.layer);
+                // 层间遮蔽：根部暗、梢部亮。
+                // 最底层壳层（input.layer < 0，贴着模型表面那层）原公式会外插，
+                // 压暗比第二层还重（1 - occ*a*(1 + 1/ShellAmount)），导致根部一圈死黑；
+                // 这里把最底层单独按 50% 遮蔽处理，其余层保持原有线性过渡不变。
+                float occStrength = input.alphaFactor * baseColor.a;
+                float layerT = max(input.layer, 0.0);                // 最底层归一为 0，避免外插
+                float occScale = (input.layer < 0.0) ? 0.5 : 1.0;    // 最底层压暗减半
+                float occlusion = 1.0 - occStrength * (1.0 - layerT) * occScale;
                 float3 color = baseColor.xyz * occlusion;
                 
                 // ============================================

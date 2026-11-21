@@ -88,8 +88,6 @@ public class FurShell_MobileGUI : ShaderGUI
         EditorGUILayout.Space(5);
         DrawRimLightSettings();
         EditorGUILayout.Space(5);
-        DrawAdvancedSettings();
-        EditorGUILayout.Space(5);
         DrawWindSettings();
         EditorGUILayout.Space(5);
         DrawTouchSettings();
@@ -396,6 +394,8 @@ public class FurShell_MobileGUI : ShaderGUI
             m_MaterialEditor.ShaderProperty(useVerShadow, "使用顶点阴影");
         if (useSelfShadow != null)
             m_MaterialEditor.ShaderProperty(useSelfShadow, "使用自身阴影");
+        if (faceViewProdThresh != null)
+            m_MaterialEditor.ShaderProperty(faceViewProdThresh, "剔除阈值");
     }
 
     private void DrawBaseProperties()
@@ -437,7 +437,10 @@ public class FurShell_MobileGUI : ShaderGUI
         if (alphaCutout != null)
             m_MaterialEditor.ShaderProperty(alphaCutout, "Alpha裁剪");
         if (occlusion != null)
-            m_MaterialEditor.ShaderProperty(occlusion, "光影遮蔽");
+            m_MaterialEditor.ShaderProperty(occlusion, new GUIContent("光影遮蔽",
+                "层间遮蔽：根部暗、梢部亮。\n" +
+                "最底层（贴着模型表面那层）只按一半强度压暗，避免根部出现死黑/黑边。\n" +
+                "数值越大根部越暗；不需要根部压暗可调低。"));
         if (lightStepSoftness != null)
             m_MaterialEditor.ShaderProperty(lightStepSoftness, new GUIContent("明暗交界线软度",
                 "明暗交界线（NdotL 阈值化）的渐变带宽度。\n" +
@@ -468,10 +471,13 @@ public class FurShell_MobileGUI : ShaderGUI
     private void DrawWindSettings()
     {
         
-        EditorGUILayout.HelpBox("xyz: 基础移动方向, w: 移动因子指数", MessageType.Info);
-        m_MaterialEditor.ShaderProperty(baseMove, "基础移动");
-        EditorGUILayout.LabelField(HeaderStyle.Rich("风力设置", HeaderStyle.Sparkle), EditorStyle.Get.BoldLabelRichStyle);
-        
+        GUILayout.Label(HeaderStyle.Rich("风力设置", HeaderStyle.Sparkle), EditorStyle.Get.BoldLabelRichStyle);
+
+        // 基础移动（始终生效，不受【使用风力】开关影响）
+        // 说明改用属性 tooltip 承载，不再插入额外的 HelpBox 行，避免参数之间出现空白块
+        DrawVector4Compact(baseMove, "基础移动",
+            "xyz: 基础移动方向, w: 移动因子指数\n" +
+            "w 越大，外层毛发的基础移动衰减越快（移动强度随层数指数下降）。");
         if (useWind != null)
             m_MaterialEditor.ShaderProperty(useWind, "使用风力");
         
@@ -489,6 +495,37 @@ public class FurShell_MobileGUI : ShaderGUI
                 m_MaterialEditor.ShaderProperty(windMove, "风移动");
             }
             EditorGUI.indentLevel--;
+        }
+    }
+
+    /// <summary>
+    /// 紧凑绘制 Vector4 属性：单行 label + X/Y/Z/W。
+    /// Unity 内置的 Vector4 drawer 控件高度为两行，在材质面板里会表现为参数行下方多出一截空白，
+    /// 这里改为手绘单行，保证与其它参数行对齐且中间无空隙。
+    /// </summary>
+    private void DrawVector4Compact(MaterialProperty prop, string label, string tooltip)
+    {
+        if (prop == null) return;
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField(new GUIContent(label, tooltip),
+                GUILayout.Width(Mathf.Max(40f, EditorGUIUtility.labelWidth - 2f)));
+
+            Vector4 v = prop.vectorValue;
+
+            EditorGUI.BeginChangeCheck();
+            float x = EditorGUILayout.FloatField(v.x);
+            float y = EditorGUILayout.FloatField(v.y);
+            float z = EditorGUILayout.FloatField(v.z);
+            float w = EditorGUILayout.FloatField(v.w);
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObjects(m_MaterialEditor.targets, "Set " + prop.name);
+                prop.vectorValue = new Vector4(x, y, z, w);
+                foreach (Object t in m_MaterialEditor.targets)
+                    EditorUtility.SetDirty(t);
+            }
         }
     }
 
@@ -515,8 +552,8 @@ public class FurShell_MobileGUI : ShaderGUI
             
             if (touchPosition != null)
             {
-                m_MaterialEditor.ShaderProperty(touchPosition, "触摸位置");
                 EditorGUILayout.HelpBox("xyz: 世界空间位置, w: 强度", MessageType.Info);
+                m_MaterialEditor.ShaderProperty(touchPosition, "触摸位置");
             }
             if (touchRadius != null)
                 m_MaterialEditor.ShaderProperty(touchRadius, "触摸半径");
@@ -755,14 +792,6 @@ public class FurShell_MobileGUI : ShaderGUI
             
             EditorGUI.indentLevel--;
         }
-    }
-
-    private void DrawAdvancedSettings()
-    {
-        // EditorGUILayout.LabelField("高级设置", EditorStyles.boldLabel);
-
-        if (faceViewProdThresh != null)
-            m_MaterialEditor.ShaderProperty(faceViewProdThresh, "剔除阈值");
     }
 
     private void DrawRimLightSettings()
